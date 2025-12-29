@@ -1,0 +1,51 @@
+# agentReagents .gitignore
+# Keep scripts, docs, configs in git
+# Exclude large binaries (downloadable via scripts)
+
+# ISOs (3-6GB each) - Download via scripts/download-isos.sh
+isos/*.iso
+
+# VM Images - Rebuild via scripts or download cloud images
+images/**/*.qcow2
+images/**/*.img
+images/**/*.raw
+images/base/*
+images/cloud/*
+images/intermediates/*
+images/templates/*
+
+# Keep image directory structure
+!images/.gitkeep
+!images/base/.gitkeep
+!images/cloud/.gitkeep
+!images/intermediates/.gitkeep
+!images/templates/.gitkeep
+
+# Binary packages (download from upstream)
+debs/**/*.deb
+bins/**/*
+
+# Tarballs
+tars/**/*.tar.gz
+tars/**/*.tar.xz
+
+# Build artifacts
+*.log
+*.tmp
+*~
+
+# SSH keys
+*.pem
+*.key
+id_rsa*
+
+# Cloud-init temp files
+**/user-data
+**/meta-data
+**/network-config
+*.iso.tmp
+
+# System files
+.DS_Store
+Thumbs.db
+
