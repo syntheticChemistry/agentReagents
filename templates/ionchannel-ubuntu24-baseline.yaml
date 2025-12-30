@@ -1,0 +1,108 @@
+name: ionchannel-ubuntu24-baseline
+version: 1.0.0
+description: |
+  Clean Ubuntu 24.04 LTS baseline for ionChannel validation
+  Fully automated, repeatable, exportable substrate
+  
+base_image: ubuntu-24.04-server-cloudimg-amd64.img
+
+resources:
+  memory_mb: 4096
+  vcpus: 2
+  disk_gb: 30
+  timeout_secs: 2400
+
+users:
+  - name: iontest
+    password: iontest123
+    groups:
+      - sudo
+      - users
+    ssh_authorized_keys: []  # Will be added from environment
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 600
+  
+  # Install desktop environment
+  - type: install_packages
+    packages:
+      - ubuntu-desktop-minimal
+      - gdm3
+      - firefox
+      - gnome-terminal
+      - gnome-shell-extensions
+      - net-tools
+      - openssh-server
+  
+  # Configure GDM for auto-login (testing)
+  - type: create_file
+    path: /etc/gdm3/custom.conf
+    content: |
+      [daemon]
+      AutomaticLoginEnable=true
+      AutomaticLogin=iontest
+      WaylandEnable=true
+    mode: "0644"
+  
+  - type: enable_service
+    service: gdm3
+  
+  - type: enable_service
+    service: ssh
+  
+  - type: run_command
+    command: systemctl set-default graphical.target
+    description: Set graphical boot target
+  
+  # Create marker file for validation
+  - type: create_file
+    path: /etc/ionchannel-substrate
+    content: |
+      substrate=ubuntu24-baseline
+      version=1.0.0
+      build_date=$(date -Iseconds)
+      wayland=gnome
+    mode: "0644"
+  
+  # Save intermediate after base setup
+  - type: save_intermediate
+    name: ubuntu24-baseline-configured
+    description: Ubuntu 24.04 with desktop, before RustDesk
+
+verification:
+  required_packages:
+    - ubuntu-desktop-minimal
+    - gdm3
+    - gnome-shell
+  
+  required_services:
+    - gdm3
+    - ssh
+  
+  required_files:
+    - /usr/bin/gnome-shell
+    - /usr/sbin/gdm3
+    - /etc/ionchannel-substrate
+  
+  verification_commands:
+    - command: systemctl is-enabled gdm3
+      expected_exit_code: 0
+      description: GDM3 should be enabled
+    
+    - command: test -f /etc/ionchannel-substrate
+      expected_exit_code: 0
+      description: Substrate marker file should exist
+
+metadata:
+  purpose: ionchannel-validation
+  substrate_type: baseline
+  os: ubuntu
+  os_version: "24.04"
+  desktop: gnome
+  wayland: true
+  exportable: true
+  intermediate_checkpoints:
+    - ubuntu24-baseline-configured
+
+

@@ -1,0 +1,153 @@
+name: ionchannel-popos-cosmic
+version: 1.0.0
+description: |
+  Pop!_OS 24.04 with COSMIC desktop for ionChannel validation
+  Requires user interaction for GUI setup, then saves intermediate
+  Fully exportable for use on other systems
+  
+base_image: ubuntu-24.04-server-cloudimg-amd64.img
+
+resources:
+  memory_mb: 6144  # COSMIC needs more RAM
+  vcpus: 4
+  disk_gb: 40
+  timeout_secs: 3600
+
+users:
+  - name: iontest
+    password: iontest123
+    groups:
+      - sudo
+      - users
+    ssh_authorized_keys: []  # Will be added from environment
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 600
+  
+  # Add COSMIC repository
+  - type: run_command
+    command: |
+      curl -fsSL https://apt.system76.com/signing-key.asc | gpg --dearmor -o /etc/apt/keyrings/system76.gpg
+    description: Add System76 signing key
+  
+  - type: create_file
+    path: /etc/apt/sources.list.d/system76-cosmic.list
+    content: |
+      deb [signed-by=/etc/apt/keyrings/system76.gpg] https://apt.system76.com/cosmic noble main
+    mode: "0644"
+  
+  - type: run_command
+    command: apt-get update
+    description: Update package lists with COSMIC repo
+  
+  # Install COSMIC packages
+  - type: install_packages
+    packages:
+      - cosmic-session
+      - cosmic-greeter
+      - cosmic-comp
+      - cosmic-panel
+      - cosmic-launcher
+      - cosmic-applets
+      - cosmic-settings
+      - cosmic-files
+      - cosmic-term
+      - cosmic-edit
+      - firefox
+      - net-tools
+      - openssh-server
+  
+  # Save intermediate before GUI setup
+  - type: save_intermediate
+    name: popos-cosmic-presetup
+    description: COSMIC installed, before user GUI configuration
+  
+  # Configure COSMIC greeter
+  - type: enable_service
+    service: cosmic-greeter
+  
+  - type: enable_service
+    service: ssh
+  
+  - type: run_command
+    command: systemctl set-default graphical.target
+    description: Set graphical boot target
+  
+  # Pause for user GUI setup
+  - type: user_verification
+    message: |
+      ⚠️  USER INTERACTION REQUIRED ⚠️
+      
+      COSMIC desktop is installed but needs initial GUI setup.
+      
+      Steps:
+      1. Connect via VNC or console
+      2. Complete COSMIC first-time setup wizard
+      3. Configure display settings
+      4. Set up workspace preferences
+      5. Log out when complete
+      
+      Press Enter when GUI setup is complete...
+    vnc_port: 5900
+  
+  # Create marker file for validation
+  - type: create_file
+    path: /etc/ionchannel-substrate
+    content: |
+      substrate=popos-cosmic
+      version=1.0.0
+      build_date=$(date -Iseconds)
+      wayland=cosmic
+      requires_gui_setup=true
+    mode: "0644"
+  
+  # Save final intermediate after user setup
+  - type: save_intermediate
+    name: popos-cosmic-configured
+    description: COSMIC fully configured, ready for validation
+
+verification:
+  required_packages:
+    - cosmic-session
+    - cosmic-greeter
+    - cosmic-comp
+    - cosmic-panel
+  
+  required_services:
+    - cosmic-greeter
+    - ssh
+  
+  required_files:
+    - /usr/bin/cosmic-session
+    - /usr/bin/cosmic-comp
+    - /usr/bin/cosmic-panel
+    - /etc/ionchannel-substrate
+  
+  verification_commands:
+    - command: systemctl is-enabled cosmic-greeter
+      expected_exit_code: 0
+      description: COSMIC greeter should be enabled
+    
+    - command: which cosmic-comp
+      expected_exit_code: 0
+      description: COSMIC compositor should be installed
+    
+    - command: test -f /etc/ionchannel-substrate
+      expected_exit_code: 0
+      description: Substrate marker file should exist
+
+metadata:
+  purpose: ionchannel-validation
+  substrate_type: cosmic-wayland
+  os: pop-os
+  os_version: "24.04"
+  desktop: cosmic
+  wayland: true
+  requires_user_setup: true
+  exportable: true
+  intermediate_checkpoints:
+    - popos-cosmic-presetup
+    - popos-cosmic-configured
+
+
