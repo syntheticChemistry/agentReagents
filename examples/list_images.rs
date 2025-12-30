@@ -6,9 +6,7 @@ use std::path::PathBuf;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     let reagents_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let manager = ImageManager::new(&reagents_root);
@@ -83,4 +81,3 @@ async fn main() -> anyhow::Result<()> {
 
     Ok(())
 }
-

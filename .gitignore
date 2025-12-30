@@ -49,3 +49,4 @@ id_rsa*
 .DS_Store
 Thumbs.db
 
+target/

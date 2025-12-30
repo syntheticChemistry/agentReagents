@@ -1,19 +1,17 @@
 //! Build a COSMIC desktop image with verification
-//! 
+//!
 //! This example demonstrates the modern Rust-based image builder
 //! that replaces the old bash scripts.
 
 use agent_reagents::builder::ImageBuilder;
 use agent_reagents::images::ImageManager;
+use anyhow::{bail, Context, Result};
 use std::path::PathBuf;
-use anyhow::{Result, Context, bail};
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize tracing for observability
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     println!("╔══════════════════════════════════════════════════════════════╗");
     println!("║  COSMIC Desktop Builder - Modern Rust Implementation        ║");
@@ -23,12 +21,13 @@ async fn main() -> Result<()> {
     // Find Ubuntu 24.04 cloud image
     let reagents_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let image_manager = ImageManager::new(&reagents_root);
-    
+
     println!("🔍 Looking for Ubuntu 24.04 cloud image...");
-    let base_image = image_manager.find_cloud_image("ubuntu-24.04")
+    let base_image = image_manager
+        .find_cloud_image("ubuntu-24.04")
         .await?
         .context("Ubuntu 24.04 cloud image not found. Run: scripts/download-cloud-images.sh")?;
-    
+
     println!("✅ Found: {}", base_image.name);
     println!("   Path: {:?}", base_image.path);
     println!();
@@ -39,13 +38,10 @@ async fn main() -> Result<()> {
     println!();
 
     // Create builder
-    let mut builder = ImageBuilder::new(
-        "popos-cosmic-desktop",
-        base_image.path
-    )
-    .memory(4096)
-    .vcpus(2)
-    .disk_size(30);
+    let mut builder = ImageBuilder::new("popos-cosmic-desktop", base_image.path)
+        .memory(4096)
+        .vcpus(2)
+        .disk_size(30);
 
     println!("🚀 Starting COSMIC desktop build...");
     println!("   Memory: 4096 MB");
@@ -66,7 +62,10 @@ async fn main() -> Result<()> {
             println!("╚══════════════════════════════════════════════════════════════╝");
             println!();
             println!("📍 Template: {:?}", result.template_path);
-            println!("📊 Size: {:.2} GB", result.size_bytes as f64 / 1_073_741_824.0);
+            println!(
+                "📊 Size: {:.2} GB",
+                result.size_bytes as f64 / 1_073_741_824.0
+            );
             println!("⏱️  Duration: {:?}", result.build_duration);
             println!();
             println!("✅ Verification:");
@@ -93,13 +92,15 @@ async fn main() -> Result<()> {
 fn get_ssh_public_key() -> Result<String> {
     let home = std::env::var("HOME").context("HOME not set")?;
     let ssh_key_path = PathBuf::from(home).join(".ssh/id_rsa.pub");
-    
+
     if ssh_key_path.exists() {
-        let key = std::fs::read_to_string(&ssh_key_path)
-            .context("Failed to read SSH public key")?;
+        let key =
+            std::fs::read_to_string(&ssh_key_path).context("Failed to read SSH public key")?;
         Ok(key.trim().to_string())
     } else {
-        bail!("SSH public key not found at {:?}. Generate one with: ssh-keygen -t rsa", ssh_key_path);
+        bail!(
+            "SSH public key not found at {:?}. Generate one with: ssh-keygen -t rsa",
+            ssh_key_path
+        );
     }
 }
-

@@ -1,6 +1,6 @@
 //! Package management
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 /// Package type
@@ -41,14 +41,14 @@ impl PackageManager {
     /// List all packages
     pub async fn list_packages(&self) -> Result<Vec<Package>> {
         let packages_dir = self.reagents_root.join("packages");
-        
+
         if !packages_dir.exists() {
             return Ok(vec![]);
         }
 
         let mut packages = Vec::new();
         self.scan_directory(&packages_dir, &mut packages).await?;
-        
+
         Ok(packages)
     }
 
@@ -59,14 +59,19 @@ impl PackageManager {
     }
 
     /// Recursively scan directory for packages
-    fn scan_directory<'a>(&'a self, dir: &'a Path, packages: &'a mut Vec<Package>) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
+    fn scan_directory<'a>(
+        &'a self,
+        dir: &'a Path,
+        packages: &'a mut Vec<Package>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
         Box::pin(async move {
-            let mut entries = tokio::fs::read_dir(dir).await
+            let mut entries = tokio::fs::read_dir(dir)
+                .await
                 .context(format!("Failed to read directory: {:?}", dir))?;
 
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
-                
+
                 if path.is_dir() {
                     self.scan_directory(&path, packages).await?;
                 } else if path.is_file() {
@@ -82,9 +87,7 @@ impl PackageManager {
 
     /// Parse a file as a package
     async fn parse_package(&self, path: &Path) -> Result<Option<Package>> {
-        let extension = path.extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let extension = path.extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let package_type = match extension {
             "deb" => Some(PackageType::Deb),
@@ -95,7 +98,8 @@ impl PackageManager {
 
         if let Some(pkg_type) = package_type {
             let metadata = tokio::fs::metadata(path).await?;
-            let name = path.file_name()
+            let name = path
+                .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown")
                 .to_string();
@@ -122,4 +126,3 @@ mod tests {
         assert_ne!(PackageType::Deb, PackageType::Rpm);
     }
 }
-

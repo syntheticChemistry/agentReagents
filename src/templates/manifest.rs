@@ -1,5 +1,5 @@
 //! Template manifest definitions
-//! 
+//!
 //! Defines the structure for template manifests that describe
 //! how to build VM templates in a reproducible way.
 
@@ -12,33 +12,33 @@ use std::collections::HashMap;
 pub struct TemplateManifest {
     /// Template name
     pub name: String,
-    
+
     /// Template version (semver)
     pub version: String,
-    
+
     /// Base image to build from
     pub base_image: String,
-    
+
     /// Description
     pub description: Option<String>,
-    
+
     /// VM resources
     pub resources: ResourceConfig,
-    
+
     /// Build steps
     pub build_steps: Vec<BuildStep>,
-    
+
     /// Verification steps
     pub verification: VerificationConfig,
-    
+
     /// Metadata (optional)
     #[serde(default)]
     pub metadata: HashMap<String, String>,
-    
+
     /// Created timestamp (filled by builder)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created: Option<DateTime<Utc>>,
-    
+
     /// SHA256 checksum (filled by builder)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checksum: Option<String>,
@@ -49,13 +49,13 @@ pub struct TemplateManifest {
 pub struct ResourceConfig {
     /// Memory in MB
     pub memory_mb: usize,
-    
+
     /// Number of vCPUs
     pub vcpus: usize,
-    
+
     /// Disk size in GB
     pub disk_gb: usize,
-    
+
     /// Build timeout in seconds
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
@@ -74,43 +74,36 @@ pub enum BuildStep {
         #[serde(default = "default_cloud_init_timeout")]
         timeout_secs: u64,
     },
-    
+
     /// Add APT repository
     AddRepository {
         name: String,
         url: String,
         key_url: Option<String>,
     },
-    
+
     /// Install packages
-    InstallPackages {
-        packages: Vec<String>,
-    },
-    
+    InstallPackages { packages: Vec<String> },
+
     /// Run shell command
     RunCommand {
         command: String,
         description: Option<String>,
     },
-    
+
     /// Enable systemd service
-    EnableService {
-        service: String,
-    },
-    
+    EnableService { service: String },
+
     /// Create file with content
     CreateFile {
         path: String,
         content: String,
         mode: Option<String>,
     },
-    
+
     /// Download file
-    DownloadFile {
-        url: String,
-        dest: String,
-    },
-    
+    DownloadFile { url: String, dest: String },
+
     /// Reboot VM
     Reboot {
         #[serde(default = "default_reboot_wait")]
@@ -132,15 +125,15 @@ pub struct VerificationConfig {
     /// Packages that must be installed
     #[serde(default)]
     pub required_packages: Vec<String>,
-    
+
     /// Services that must be enabled
     #[serde(default)]
     pub required_services: Vec<String>,
-    
+
     /// Files that must exist
     #[serde(default)]
     pub required_files: Vec<String>,
-    
+
     /// Commands to run for verification
     #[serde(default)]
     pub verification_commands: Vec<VerificationCommand>,
@@ -151,11 +144,11 @@ pub struct VerificationConfig {
 pub struct VerificationCommand {
     /// Command to run
     pub command: String,
-    
+
     /// Expected exit code (default: 0)
     #[serde(default)]
     pub expected_exit_code: i32,
-    
+
     /// Description
     pub description: Option<String>,
 }
@@ -167,44 +160,44 @@ impl TemplateManifest {
         let manifest: Self = serde_yaml::from_str(&content)?;
         Ok(manifest)
     }
-    
+
     /// Save manifest to YAML file
     pub fn to_yaml_file(&self, path: &std::path::Path) -> anyhow::Result<()> {
         let yaml = serde_yaml::to_string(self)?;
         std::fs::write(path, yaml)?;
         Ok(())
     }
-    
+
     /// Validate manifest
     pub fn validate(&self) -> anyhow::Result<()> {
         // Check name
         if self.name.is_empty() {
             anyhow::bail!("Template name cannot be empty");
         }
-        
+
         // Check version (basic semver check)
         if !self.version.contains('.') {
             anyhow::bail!("Version must be in semver format (e.g., 1.0.0)");
         }
-        
+
         // Check base image
         if self.base_image.is_empty() {
             anyhow::bail!("Base image cannot be empty");
         }
-        
+
         // Check resources
         if self.resources.memory_mb < 512 {
             anyhow::bail!("Memory must be at least 512 MB");
         }
-        
+
         if self.resources.vcpus < 1 {
             anyhow::bail!("Must have at least 1 vCPU");
         }
-        
+
         if self.resources.disk_gb < 10 {
             anyhow::bail!("Disk size must be at least 10 GB");
         }
-        
+
         Ok(())
     }
 }
@@ -212,7 +205,7 @@ impl TemplateManifest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_manifest_validation() {
         let mut manifest = TemplateManifest {
@@ -237,12 +230,11 @@ mod tests {
             created: None,
             checksum: None,
         };
-        
+
         assert!(manifest.validate().is_ok());
-        
+
         // Test invalid memory
         manifest.resources.memory_mb = 256;
         assert!(manifest.validate().is_err());
     }
 }
-

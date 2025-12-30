@@ -1,54 +1,50 @@
 // Build state machine for image builder
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// State of the image build process
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BuildState {
     /// Initial state, not started
     Idle,
-    
+
     /// Starting the build process
     Starting,
-    
+
     /// Creating the builder VM
     CreatingVm,
-    
+
     /// Monitoring the build process
     Monitoring,
-    
+
     /// Cloud-init initialization phase
     CloudInitInit,
-    
+
     /// Installing system packages
     InstallingPackages {
-        progress: f32,  // 0.0 to 1.0
+        progress: f32, // 0.0 to 1.0
     },
-    
+
     /// Installing COSMIC desktop
-    InstallingCosmic {
-        progress: f32,
-    },
-    
+    InstallingCosmic { progress: f32 },
+
     /// Installing RustDesk
     InstallingRustDesk,
-    
+
     /// Cloud-init completed
     CloudInitComplete,
-    
+
     /// Verifying installation
     Verifying,
-    
+
     /// Finalizing template (sparsify, move, etc.)
     Finalizing,
-    
+
     /// Build complete
     Complete,
-    
+
     /// Build failed
-    Failed {
-        reason: String,
-    },
+    Failed { reason: String },
 }
 
 impl BuildState {
@@ -123,7 +119,7 @@ impl BuildProgress {
     pub fn new(state: BuildState, elapsed_secs: u64) -> Self {
         let progress = state.progress();
         let description = state.description();
-        
+
         Self {
             state,
             progress,
@@ -140,7 +136,10 @@ mod tests {
     #[test]
     fn test_state_terminal() {
         assert!(BuildState::Complete.is_terminal());
-        assert!(BuildState::Failed { reason: "test".to_string() }.is_terminal());
+        assert!(BuildState::Failed {
+            reason: "test".to_string()
+        }
+        .is_terminal());
         assert!(!BuildState::Starting.is_terminal());
     }
 
@@ -158,4 +157,3 @@ mod tests {
         assert!(desc.contains("50%"));
     }
 }
-

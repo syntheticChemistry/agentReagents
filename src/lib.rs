@@ -1,19 +1,19 @@
 //! agentReagents - VM Image and Package Management
-//! 
+//!
 //! Provides reusable VM images and software packages for the biomeOS ecosystem.
-//! 
+//!
 //! # Modules
-//! 
+//!
 //! - `builder` - Image builder with async state machine and verification
 //! - `images` - Image management and discovery
 //! - `packages` - Package management
-//! 
+//!
 //! # Example
-//! 
+//!
 //! ```no_run
 //! use agent_reagents::builder::ImageBuilder;
 //! use std::path::PathBuf;
-//! 
+//!
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
 //!     let mut builder = ImageBuilder::new(
@@ -38,5 +38,4 @@ pub mod packages;
 pub mod templates;
 
 // Re-export commonly used types
-pub use builder::{ImageBuilder, BuildResult, BuildState, VerificationResult};
-
+pub use builder::{BuildResult, BuildState, ImageBuilder, VerificationResult};

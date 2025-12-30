@@ -1,6 +1,6 @@
 //! Image management and discovery
 
-use anyhow::{Result, Context};
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 /// Image types available
@@ -42,17 +42,23 @@ impl ImageManager {
 
     /// List all cloud images
     pub async fn list_cloud_images(&self) -> Result<Vec<Image>> {
-        self.list_images_in_dir(self.reagents_root.join("images/cloud"), ImageType::Cloud).await
+        self.list_images_in_dir(self.reagents_root.join("images/cloud"), ImageType::Cloud)
+            .await
     }
 
     /// List all ISO images
     pub async fn list_iso_images(&self) -> Result<Vec<Image>> {
-        self.list_images_in_dir(self.reagents_root.join("isos"), ImageType::Iso).await
+        self.list_images_in_dir(self.reagents_root.join("isos"), ImageType::Iso)
+            .await
     }
 
     /// List all templates
     pub async fn list_templates(&self) -> Result<Vec<Image>> {
-        self.list_images_in_dir(self.reagents_root.join("images/templates"), ImageType::Template).await
+        self.list_images_in_dir(
+            self.reagents_root.join("images/templates"),
+            ImageType::Template,
+        )
+        .await
     }
 
     /// Find a specific cloud image by name
@@ -68,18 +74,20 @@ impl ImageManager {
         }
 
         let mut images = Vec::new();
-        let mut entries = tokio::fs::read_dir(&dir).await
+        let mut entries = tokio::fs::read_dir(&dir)
+            .await
             .context(format!("Failed to read directory: {:?}", dir))?;
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            
+
             if path.is_file() {
                 if let Some(extension) = path.extension() {
                     let ext = extension.to_string_lossy();
                     if ext == "img" || ext == "qcow2" || ext == "iso" {
                         let metadata = tokio::fs::metadata(&path).await?;
-                        let name = path.file_name()
+                        let name = path
+                            .file_name()
                             .and_then(|n| n.to_str())
                             .unwrap_or("unknown")
                             .to_string();
@@ -109,4 +117,3 @@ mod tests {
         assert_ne!(ImageType::Cloud, ImageType::Iso);
     }
 }
-

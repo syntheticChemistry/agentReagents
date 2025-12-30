@@ -1,5 +1,5 @@
 //! VM Handle for managing builder VMs
-//! 
+//!
 //! Provides a high-level interface for interacting with VMs during the build process.
 
 use anyhow::{Context, Result};
@@ -44,14 +44,24 @@ impl VmHandle {
         &self.node.id
     }
 
+    /// Get reference to backend
+    pub fn backend(&self) -> &LibvirtBackend {
+        &self.backend
+    }
+
+    /// Get reference to node info
+    pub fn node(&self) -> &NodeInfo {
+        &self.node
+    }
+
     /// Execute a command via SSH
     pub async fn ssh_exec(&self, user: &str, cmd: &str) -> Result<String> {
         debug!("Executing SSH command on {}: {}", self.node.name, cmd);
-        
+
         // Use benchScale's SSH capabilities
         // For now, we'll use a simple implementation
         // TODO: benchScale should expose ssh_exec on LibvirtBackend
-        
+
         // Temporary: use tokio::process to call ssh
         let output = tokio::process::Command::new("ssh")
             .arg("-o")
@@ -80,14 +90,11 @@ impl VmHandle {
             .ssh_exec(user, "cloud-init status --format=json")
             .await?;
 
-        let status: serde_json::Value = serde_json::from_str(&output)
-            .context("Failed to parse cloud-init status")?;
+        let status: serde_json::Value =
+            serde_json::from_str(&output).context("Failed to parse cloud-init status")?;
 
         Ok(CloudInitStatusInfo {
-            status: status["status"]
-                .as_str()
-                .unwrap_or("unknown")
-                .to_string(),
+            status: status["status"].as_str().unwrap_or("unknown").to_string(),
             running: status["status"].as_str() == Some("running"),
             finished: status["status"].as_str() == Some("done"),
             errors: status["errors"]
@@ -105,7 +112,8 @@ impl VmHandle {
     pub async fn wait_for_cloud_init(&self, user: &str, timeout: Duration) -> Result<()> {
         self.wait_for_cloud_init_with_progress(user, timeout, |status| {
             info!("Cloud-init: {}", status);
-        }).await
+        })
+        .await
     }
 
     /// Wait for cloud-init to complete with custom progress callback
@@ -118,11 +126,14 @@ impl VmHandle {
     where
         F: FnMut(&str),
     {
-        info!("Waiting for cloud-init to complete on {}...", self.node.name);
+        info!(
+            "Waiting for cloud-init to complete on {}...",
+            self.node.name
+        );
 
         let start = std::time::Instant::now();
         let mut last_status = String::new();
-        
+
         loop {
             if start.elapsed() > timeout {
                 anyhow::bail!("Timeout waiting for cloud-init after {:?}", timeout);
@@ -146,7 +157,10 @@ impl VmHandle {
                     }
                 }
                 Err(e) => {
-                    debug!("Failed to get cloud-init status (may not be ready yet): {}", e);
+                    debug!(
+                        "Failed to get cloud-init status (may not be ready yet): {}",
+                        e
+                    );
                     progress_callback("waiting for SSH...");
                 }
             }
@@ -158,7 +172,10 @@ impl VmHandle {
     /// Get detailed cloud-init stage information
     pub async fn get_cloud_init_stages(&self, user: &str) -> Result<Vec<String>> {
         let output = self
-            .ssh_exec(user, "cloud-init status --long 2>/dev/null || echo 'unavailable'")
+            .ssh_exec(
+                user,
+                "cloud-init status --long 2>/dev/null || echo 'unavailable'",
+            )
             .await?;
 
         let stages: Vec<String> = output
@@ -173,7 +190,10 @@ impl VmHandle {
     /// Check if a package is installed
     pub async fn is_package_installed(&self, user: &str, package: &str) -> Result<bool> {
         let result = self
-            .ssh_exec(user, &format!("dpkg -l {} 2>/dev/null | grep -q '^ii'", package))
+            .ssh_exec(
+                user,
+                &format!("dpkg -l {} 2>/dev/null | grep -q '^ii'", package),
+            )
             .await;
 
         Ok(result.is_ok())
@@ -208,4 +228,3 @@ impl VmHandle {
         Ok(())
     }
 }
-

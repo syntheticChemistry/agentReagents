@@ -1,13 +1,13 @@
 //! Template Registry System
-//! 
+//!
 //! Provides reproducible template management with manifests, verification,
 //! and checksums. This replaces bash scripts with type-safe Rust.
 
-mod manifest;
+pub mod manifest;
 mod registry;
 
-pub use manifest::{TemplateManifest, BuildStep};
-pub use registry::{TemplateRegistry, RegistryError};
+pub use manifest::{BuildStep, TemplateManifest};
+pub use registry::{RegistryError, TemplateRegistry};
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -28,4 +28,3 @@ pub struct TemplateInfo {
     /// Verification status
     pub verified: bool,
 }
-

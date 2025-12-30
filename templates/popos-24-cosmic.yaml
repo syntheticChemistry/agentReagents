@@ -1,6 +1,6 @@
 name: popos-24-cosmic
 version: 1.0.0
-base_image: ubuntu-24.04-server-cloudimg-amd64.img
+base_image: /var/lib/libvirt/images/ubuntu-24.04-server-cloudimg-amd64.img
 description: Pop!_OS 24.04 with COSMIC desktop environment
 
 resources:

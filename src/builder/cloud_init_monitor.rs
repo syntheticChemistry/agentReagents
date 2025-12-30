@@ -1,22 +1,18 @@
 // Cloud-init monitoring and status checking
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 /// Cloud-init execution status
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CloudInitStatus {
     /// Cloud-init is currently running
-    Running {
-        stage: CloudInitStage,
-    },
-    
+    Running { stage: CloudInitStage },
+
     /// Cloud-init completed successfully
     Done,
-    
+
     /// Cloud-init encountered an error
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 impl CloudInitStatus {
@@ -41,19 +37,19 @@ impl CloudInitStatus {
 pub enum CloudInitStage {
     /// Local stage (early boot)
     Init,
-    
+
     /// Config stage (network up, running config modules)
     Config,
-    
+
     /// Final stage (running final modules)
     Final,
-    
+
     /// Modules config stage
     ModulesConfig,
-    
+
     /// Modules final stage
     ModulesFinal,
-    
+
     /// Unknown/other stage
     Unknown(String),
 }
@@ -74,11 +70,12 @@ impl From<CloudInitStatusJson> for CloudInitStatus {
             "done" => CloudInitStatus::Done,
             "running" => {
                 // Try to determine stage from detail
-                let stage = json.detail
+                let stage = json
+                    .detail
                     .as_ref()
                     .and_then(|d| parse_stage_from_detail(d))
                     .unwrap_or(CloudInitStage::Unknown("running".to_string()));
-                
+
                 CloudInitStatus::Running { stage }
             }
             "error" => {
@@ -102,7 +99,7 @@ impl From<CloudInitStatusJson> for CloudInitStatus {
 /// Parse cloud-init stage from detail string
 fn parse_stage_from_detail(detail: &str) -> Option<CloudInitStage> {
     let detail_lower = detail.to_lowercase();
-    
+
     if detail_lower.contains("init") {
         Some(CloudInitStage::Init)
     } else if detail_lower.contains("config") {
@@ -130,7 +127,7 @@ mod tests {
             errors: vec![],
             recoverable_errors: serde_json::Value::Null,
         };
-        
+
         let status: CloudInitStatus = json.into();
         assert!(status.is_done());
     }
@@ -143,10 +140,10 @@ mod tests {
             errors: vec![],
             recoverable_errors: serde_json::Value::Null,
         };
-        
+
         let status: CloudInitStatus = json.into();
         assert!(status.is_running());
-        
+
         if let CloudInitStatus::Running { stage } = status {
             assert_eq!(stage, CloudInitStage::Init);
         } else {
@@ -162,7 +159,7 @@ mod tests {
             errors: vec!["Failed to install packages".to_string()],
             recoverable_errors: serde_json::Value::Null,
         };
-        
+
         let status: CloudInitStatus = json.into();
         assert!(status.is_error());
     }
@@ -175,9 +172,8 @@ mod tests {
             errors: vec![],
             recoverable_errors: serde_json::Value::Null,
         };
-        
+
         let status: CloudInitStatus = json.into();
         assert!(status.is_error());
     }
 }
-
