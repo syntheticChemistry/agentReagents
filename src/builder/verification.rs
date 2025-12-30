@@ -63,8 +63,10 @@ impl VerificationResult {
         if self.passed {
             format!("✅ All {} checks passed", self.total)
         } else {
-            format!("❌ {}/{} checks passed ({} failed)", 
-                self.passed_count, self.total, self.failed_count)
+            format!(
+                "❌ {}/{} checks passed ({} failed)",
+                self.passed_count, self.total, self.failed_count
+            )
         }
     }
 }
@@ -86,9 +88,15 @@ pub async fn verify_installation(vm: &VmHandle, manifest: &Manifest) -> Result<V
     let result = VerificationResult::from_checks(checks);
 
     if result.passed {
-        info!("✅ Verification passed: {}/{} checks", result.passed_count, result.total);
+        info!(
+            "✅ Verification passed: {}/{} checks",
+            result.passed_count, result.total
+        );
     } else {
-        warn!("❌ Verification failed: {}/{} checks passed", result.passed_count, result.total);
+        warn!(
+            "❌ Verification failed: {}/{} checks passed",
+            result.passed_count, result.total
+        );
         for check in result.failed_checks() {
             warn!("  Failed: {} - {:?}", check.name, check.details);
         }
@@ -102,7 +110,9 @@ async fn verify_packages(vm: &VmHandle, manifest: &Manifest) -> Result<Vec<Verif
     let mut checks = Vec::new();
 
     // Get packages from build steps
-    let packages: Vec<String> = manifest.build_steps.iter()
+    let packages: Vec<String> = manifest
+        .build_steps
+        .iter()
         .filter_map(|step| {
             if let crate::templates::BuildStep::InstallPackages { packages } = step {
                 Some(packages.clone())
@@ -117,10 +127,13 @@ async fn verify_packages(vm: &VmHandle, manifest: &Manifest) -> Result<Vec<Verif
 
     for package in &packages {
         let check_name = format!("Package: {}", package);
-        
+
         // Use dpkg to check if package is installed
         let result = vm
-            .ssh_exec("ubuntu", &format!("dpkg -l {} 2>/dev/null | grep -q '^ii'", package))
+            .ssh_exec(
+                "ubuntu",
+                &format!("dpkg -l {} 2>/dev/null | grep -q '^ii'", package),
+            )
             .await;
 
         let (passed, details) = match result {
@@ -146,9 +159,15 @@ async fn verify_commands(vm: &VmHandle, manifest: &Manifest) -> Result<Vec<Verif
 
     // Check for common indicators of successful setup
     let indicators = vec![
-        ("Cloud-init complete", "test -f /var/lib/cloud/instance/boot-finished"),
+        (
+            "Cloud-init complete",
+            "test -f /var/lib/cloud/instance/boot-finished",
+        ),
         ("User home exists", "test -d /home/ubuntu"),
-        ("SSH authorized_keys", "test -f /home/ubuntu/.ssh/authorized_keys"),
+        (
+            "SSH authorized_keys",
+            "test -f /home/ubuntu/.ssh/authorized_keys",
+        ),
     ];
 
     for (name, command) in indicators {
@@ -167,9 +186,14 @@ async fn verify_commands(vm: &VmHandle, manifest: &Manifest) -> Result<Vec<Verif
     }
 
     // If manifest name specifies a desktop, verify display-related packages
-    if manifest.name.to_lowercase().contains("desktop") || manifest.name.to_lowercase().contains("cosmic") {
+    if manifest.name.to_lowercase().contains("desktop")
+        || manifest.name.to_lowercase().contains("cosmic")
+    {
         let desktop_check = vm
-            .ssh_exec("ubuntu", "dpkg -l | grep -E '(xorg|wayland|cosmic)' | wc -l")
+            .ssh_exec(
+                "ubuntu",
+                "dpkg -l | grep -E '(xorg|wayland|cosmic)' | wc -l",
+            )
             .await;
 
         let (passed, details) = match desktop_check {
@@ -210,7 +234,10 @@ async fn verify_system_health(vm: &VmHandle) -> Result<Vec<VerificationCheck>> {
 
     // Check disk space
     let df_result = vm
-        .ssh_exec("ubuntu", "df -h / | tail -1 | awk '{print $5}' | sed 's/%//'")
+        .ssh_exec(
+            "ubuntu",
+            "df -h / | tail -1 | awk '{print $5}' | sed 's/%//'",
+        )
         .await;
 
     let (passed, details) = match df_result {

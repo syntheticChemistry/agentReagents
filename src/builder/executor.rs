@@ -9,6 +9,9 @@ use tokio::time::Duration;
 use tracing::{debug, info};
 
 /// Execute build steps, with concurrency where possible
+///
+/// TODO: This will be used by the full manifest-driven build() method
+#[allow(dead_code)]
 pub async fn execute_build_steps(vm: &VmHandle, steps: &[BuildStep]) -> Result<()> {
     for (idx, step) in steps.iter().enumerate() {
         info!("Executing step {}/{}: {:?}", idx + 1, steps.len(), step);
@@ -112,12 +115,13 @@ async fn execute_build_step(vm: &VmHandle, step: &BuildStep) -> Result<()> {
 }
 
 /// Verify VM against manifest requirements
+///
+/// TODO: This will be used by the full manifest-driven build() method
+#[allow(dead_code)]
 pub async fn verify_from_manifest(
     vm: &VmHandle,
     manifest: &crate::templates::TemplateManifest,
 ) -> Result<crate::builder::VerificationResult> {
-    use crate::builder::VerificationResult;
-
     let mut errors = Vec::new();
     let mut cosmic_installed = false;
     let mut cosmic_package_count = 0;
@@ -184,35 +188,37 @@ pub async fn verify_from_manifest(
     }
 
     // Convert to new verification format
-    use crate::builder::verification::{VerificationCheck, VerificationResult as NewVerificationResult};
-    
+    use crate::builder::verification::{
+        VerificationCheck, VerificationResult as NewVerificationResult,
+    };
+
     let mut checks = Vec::new();
-    
+
     // Add check results
     checks.push(VerificationCheck {
         name: "COSMIC installed".to_string(),
         passed: cosmic_installed,
         details: Some(format!("{} COSMIC packages found", cosmic_package_count)),
     });
-    
+
     checks.push(VerificationCheck {
         name: "COSMIC greeter enabled".to_string(),
         passed: greeter_enabled,
         details: None,
     });
-    
+
     checks.push(VerificationCheck {
         name: "RustDesk installed".to_string(),
         passed: rustdesk_installed,
         details: None,
     });
-    
+
     checks.push(VerificationCheck {
         name: "SSH accessible".to_string(),
         passed: ssh_accessible,
         details: None,
     });
-    
+
     // Add error checks
     for error in errors {
         checks.push(VerificationCheck {
@@ -221,6 +227,6 @@ pub async fn verify_from_manifest(
             details: Some(error),
         });
     }
-    
+
     Ok(NewVerificationResult::from_checks(checks))
 }

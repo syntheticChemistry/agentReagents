@@ -37,11 +37,33 @@ async fn main() -> Result<()> {
     println!("🔑 Using SSH key for VM access");
     println!();
 
-    // Create builder
-    let mut builder = ImageBuilder::new("popos-cosmic-desktop", base_image.path)
-        .memory(4096)
-        .vcpus(2)
-        .disk_size(30);
+    // Create manifest for COSMIC desktop build
+    use agent_reagents::templates::{TemplateManifest, ResourceConfig, VerificationConfig};
+    let manifest = TemplateManifest {
+        name: "popos-cosmic-desktop".to_string(),
+        version: "1.0.0".to_string(),
+        base_image: base_image.path.to_string_lossy().to_string(),
+        description: Some("COSMIC Desktop build".to_string()),
+        resources: ResourceConfig {
+            memory_mb: 4096,
+            vcpus: 2,
+            disk_gb: 30,
+            timeout_secs: 2400,
+        },
+        build_steps: vec![],
+        verification: VerificationConfig {
+            required_packages: vec![],
+            required_services: vec![],
+            required_files: vec![],
+            verification_commands: vec![],
+        },
+        metadata: std::collections::HashMap::new(),
+        created: None,
+        checksum: None,
+    };
+    
+    // Create manifest-driven builder
+    let mut builder = ImageBuilder::from_manifest(manifest);
 
     println!("🚀 Starting COSMIC desktop build...");
     println!("   Memory: 4096 MB");

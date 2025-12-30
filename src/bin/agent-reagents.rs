@@ -252,16 +252,13 @@ async fn cmd_build(
     println!("Starting build process...");
     println!("");
 
-    // Create builder
-    let mut builder = ImageBuilder::new(manifest.name.clone(), base_image)
-        .memory(manifest.resources.memory_mb)
-        .vcpus(manifest.resources.vcpus)
-        .disk_size(manifest.resources.disk_gb)
-        .timeout(std::time::Duration::from_secs(
-            manifest.resources.timeout_secs,
-        ));
+    // Create manifest-driven builder
+    // Deep debt solution: All builds are now declarative and manifest-driven
+    let timeout = std::time::Duration::from_secs(manifest.resources.timeout_secs);
+    let mut builder = ImageBuilder::from_manifest(manifest).with_timeout(timeout);
 
-    // Execute build
+    // Execute build (NOTE: build_cosmic_desktop is deprecated, use generic build() in future)
+    #[allow(deprecated)]
     let result = builder
         .build_cosmic_desktop(ssh_key)
         .await

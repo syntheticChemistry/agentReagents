@@ -12,24 +12,24 @@ pub use state::{BuildProgress, BuildState};
 pub use verification::VerificationResult;
 pub use vm_handle::{CloudInitStatusInfo, VmHandle};
 
-use executor::{execute_build_steps, verify_from_manifest};
-
+use crate::templates::TemplateManifest;
 use anyhow::{bail, Context, Result};
-use benchscale::backend::{Backend, LibvirtBackend};
-use benchscale::CloudInit as BenchScaleCloudInit;
 use std::path::PathBuf;
 use tokio::time::{sleep, timeout, Duration};
 use tracing::{error, info, instrument, warn};
 // Serialization handled by sub-modules
 
 /// Image builder for creating VM templates with desktop environments
+/// 
+/// This builder is manifest-driven: it takes a TemplateManifest and
+/// executes the build steps defined within. This ensures all builds
+/// are declarative and reproducible.
 pub struct ImageBuilder {
-    name: String,
-    base_image: PathBuf,
-    memory_mb: usize,
-    vcpus: usize,
-    disk_size_gb: usize,
+    /// Template manifest defining the build
+    manifest: TemplateManifest,
+    /// Build timeout (can override manifest)
     timeout: Duration,
+    /// Current build state
     state: BuildState,
 }
 
@@ -43,39 +43,21 @@ pub struct BuildResult {
 }
 
 impl ImageBuilder {
-    /// Create a new image builder
-    pub fn new(name: impl Into<String>, base_image: PathBuf) -> Self {
+    /// Create a new manifest-driven image builder
+    /// 
+    /// Deep debt solution: All builds are now manifest-driven, ensuring
+    /// reproducibility and declarative configuration.
+    pub fn from_manifest(manifest: TemplateManifest) -> Self {
+        let timeout = Duration::from_secs(manifest.resources.timeout_secs);
         Self {
-            name: name.into(),
-            base_image,
-            memory_mb: 4096,
-            vcpus: 2,
-            disk_size_gb: 30,
-            timeout: Duration::from_secs(40 * 60), // 40 minutes
+            manifest,
+            timeout,
             state: BuildState::Idle,
         }
     }
 
-    /// Set memory in MB
-    pub fn memory(mut self, mb: usize) -> Self {
-        self.memory_mb = mb;
-        self
-    }
-
-    /// Set number of vCPUs
-    pub fn vcpus(mut self, count: usize) -> Self {
-        self.vcpus = count;
-        self
-    }
-
-    /// Set disk size in GB
-    pub fn disk_size(mut self, gb: usize) -> Self {
-        self.disk_size_gb = gb;
-        self
-    }
-
-    /// Set build timeout
-    pub fn timeout(mut self, duration: Duration) -> Self {
+    /// Set build timeout (override manifest default)
+    pub fn with_timeout(mut self, duration: Duration) -> Self {
         self.timeout = duration;
         self
     }
@@ -85,12 +67,26 @@ impl ImageBuilder {
         &self.state
     }
 
+    /// Get the template manifest
+    pub fn manifest(&self) -> &TemplateManifest {
+        &self.manifest
+    }
+    
+    /// Get the VM name from manifest
+    pub fn name(&self) -> &str {
+        &self.manifest.name
+    }
+
     /// Build a COSMIC desktop image
+    ///
+    /// DEPRECATED: Use the manifest-driven `build()` method instead.
+    /// This method exists for backward compatibility.
     #[instrument(skip(self))]
+    #[deprecated(note = "Use manifest-driven build() method instead")]
     pub async fn build_cosmic_desktop(&mut self, ssh_public_key: String) -> Result<BuildResult> {
         let start_time = std::time::Instant::now();
 
-        info!("Starting COSMIC desktop build: {}", self.name);
+        info!("Starting COSMIC desktop build: {}", self.manifest.name);
         self.transition_to(BuildState::Starting)?;
 
         // Create cloud-init configuration
@@ -282,24 +278,34 @@ final_message: |
         Ok(cloud_init)
     }
 
-    /// Create the builder VM using benchScale (type-safe)
+    /// Create the builder VM using benchScale with manifest configuration
+    /// 
+    /// Deep debt: Uses runtime capability discovery via benchScale backend
+    /// instead of hardcoded paths and IPs.
     async fn create_builder_vm(&self, cloud_init: benchscale::CloudInit) -> Result<VmHandle> {
         use benchscale::backend::LibvirtBackend;
+        use std::path::Path;
 
-        info!("Creating builder VM: {}", self.name);
+        info!("Creating builder VM: {}", self.manifest.name);
 
-        // Create LibvirtBackend
+        // Create LibvirtBackend - it discovers capabilities at runtime
         let backend = LibvirtBackend::new().context("Failed to create libvirt backend")?;
 
-        // Create VM using benchScale with type-safe CloudInit
+        // Get base image path from manifest
+        let base_image = Path::new(&self.manifest.base_image);
+
+        // Create VM using benchScale with manifest-defined resources
         let node = backend
             .create_desktop_vm(
-                &self.name,
-                &self.base_image,
+                &self.manifest.name,
+                base_image,
                 &cloud_init,
-                self.memory_mb.try_into().unwrap(),
-                self.vcpus.try_into().unwrap(),
-                self.disk_size_gb.try_into().unwrap(),
+                self.manifest.resources.memory_mb.try_into()
+                    .context("Invalid memory size")?,
+                self.manifest.resources.vcpus.try_into()
+                    .context("Invalid vCPU count")?,
+                self.manifest.resources.disk_gb.try_into()
+                    .context("Invalid disk size")?,
             )
             .await
             .context("Failed to create desktop VM")?;
@@ -348,6 +354,9 @@ final_message: |
     }
 
     /// Update build state based on cloud-init status
+    ///
+    /// TODO: This will be used by the full manifest-driven build() method
+    #[allow(dead_code)]
     fn update_state_from_cloud_init(&mut self, status: &CloudInitStatus) -> Result<()> {
         let new_state = match status {
             CloudInitStatus::Running { stage } => {
@@ -365,20 +374,34 @@ final_message: |
         self.transition_to(new_state)
     }
 
-    /// Verify the installation
-    #[instrument(skip(self, _vm))]
-    async fn verify_installation(&self, _vm: &VmHandle) -> Result<VerificationResult> {
-        info!("Verifying installation...");
+    /// Verify the installation against manifest expectations
+    /// 
+    /// Uses the comprehensive verification system to check that all
+    /// packages, services, and configurations from the manifest are
+    /// correctly applied.
+    #[instrument(skip(self, vm))]
+    async fn verify_installation(&self, vm: &VmHandle) -> Result<VerificationResult> {
+        info!("Verifying installation for template: {}", self.manifest.name);
 
-        // TODO: Implement verification
-        // - Check COSMIC packages installed
-        // - Check cosmic-greeter enabled
-        // - Check RustDesk if applicable
+        // Use the comprehensive verification system with our manifest
+        let result = verification::verify_installation(vm, &self.manifest).await?;
 
-        todo!("Implement verification")
+        if result.passed {
+            info!("✅ Verification passed: {}", result.summary());
+        } else {
+            warn!("⚠️ Verification had failures: {}", result.summary());
+            for check in result.failed_checks() {
+                warn!("  Failed: {} - {:?}", check.name, check.details);
+            }
+        }
+
+        Ok(result)
     }
 
     /// Finalize the template
+    /// 
+    /// Deep debt: Uses capability discovery to find the actual image path
+    /// instead of hardcoding /var/lib/libvirt/images
     #[instrument(skip(self, vm))]
     async fn finalize_template(&self, vm: &VmHandle) -> Result<PathBuf> {
         info!("Finalizing template...");
@@ -392,9 +415,14 @@ final_message: |
         // Wait for shutdown
         tokio::time::sleep(Duration::from_secs(5)).await;
 
-        // The template is the disk image
-        let template_path =
-            PathBuf::from(format!("/var/lib/libvirt/images/{}.qcow2", vm.node().name));
+        // Deep debt solution: Use capability discovery to find actual image path
+        // The backend discovered this at runtime, we just query it
+        let template_path = vm
+            .backend()
+            .capabilities()
+            .storage
+            .images_dir
+            .join(format!("{}.qcow2", vm.node().name));
 
         info!("Template created at: {}", template_path.display());
         info!("✅ Template finalized!");

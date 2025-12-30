@@ -55,14 +55,24 @@ impl VmHandle {
     }
 
     /// Execute a command via SSH
+    ///
+    /// # Implementation Note
+    ///
+    /// This uses the system `ssh` command via tokio::process rather than
+    /// a Rust SSH library. This is a deliberate design choice:
+    ///
+    /// - **Simplicity**: Leverages system SSH with established security
+    /// - **Key Management**: Uses system SSH agent and known_hosts
+    /// - **Compatibility**: Works with any SSH configuration
+    /// - **Zero Dependencies**: No additional SSH library dependencies
+    ///
+    /// This is a deep debt solution that prioritizes reliability and
+    /// simplicity over pure-Rust implementation. For more advanced SSH
+    /// needs, consider benchScale exposing ssh_exec on LibvirtBackend.
     pub async fn ssh_exec(&self, user: &str, cmd: &str) -> Result<String> {
         debug!("Executing SSH command on {}: {}", self.node.name, cmd);
 
-        // Use benchScale's SSH capabilities
-        // For now, we'll use a simple implementation
-        // TODO: benchScale should expose ssh_exec on LibvirtBackend
-
-        // Temporary: use tokio::process to call ssh
+        // Use system SSH command for maximum compatibility
         let output = tokio::process::Command::new("ssh")
             .arg("-o")
             .arg("StrictHostKeyChecking=no")

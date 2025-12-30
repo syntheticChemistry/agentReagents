@@ -6,7 +6,7 @@
 pub mod manifest;
 mod registry;
 
-pub use manifest::{BuildStep, TemplateManifest};
+pub use manifest::{BuildStep, ResourceConfig, TemplateManifest, VerificationConfig};
 pub use registry::{RegistryError, TemplateRegistry};
 
 use serde::{Deserialize, Serialize};
