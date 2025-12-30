@@ -1,0 +1,77 @@
+name: popos-24-cosmic
+version: 1.0.0
+base_image: ubuntu-24.04-server-cloudimg-amd64.img
+description: Pop!_OS 24.04 with COSMIC desktop environment
+
+resources:
+  memory_mb: 4096
+  vcpus: 2
+  disk_gb: 30
+  timeout_secs: 2400
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 600
+  
+  - type: add_repository
+    name: system76-cosmic
+    url: http://apt.pop-os.org/release
+    key_url: https://apt.pop-os.org/key.asc
+  
+  - type: run_command
+    command: echo "deb http://apt.pop-os.org/release noble main" | sudo tee /etc/apt/sources.list.d/system76-cosmic.list
+    description: Add COSMIC repository
+  
+  - type: run_command
+    command: apt-get update
+    description: Update package lists
+  
+  - type: install_packages
+    packages:
+      - cosmic-session
+      - cosmic-greeter
+      - cosmic-comp
+      - cosmic-panel
+      - cosmic-launcher
+      - cosmic-applets
+      - cosmic-settings
+      - cosmic-files
+      - cosmic-term
+      - cosmic-edit
+      - firefox
+  
+  - type: enable_service
+    service: cosmic-greeter
+
+  - type: run_command
+    command: systemctl set-default graphical.target
+    description: Set graphical boot target
+
+verification:
+  required_packages:
+    - cosmic-session
+    - cosmic-greeter
+    - cosmic-comp
+  
+  required_services:
+    - cosmic-greeter
+  
+  required_files:
+    - /usr/bin/cosmic-session
+    - /usr/bin/cosmic-comp
+  
+  verification_commands:
+    - command: systemctl is-enabled cosmic-greeter
+      expected_exit_code: 0
+      description: COSMIC greeter should be enabled
+    
+    - command: which cosmic-comp
+      expected_exit_code: 0
+      description: COSMIC compositor should be installed
+
+metadata:
+  os: pop-os
+  os_version: "24.04"
+  desktop: cosmic
+  upstream: ubuntu
+

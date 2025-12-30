@@ -1,0 +1,60 @@
+[package]
+name = "agent-reagents"
+version = "0.1.0"
+edition = "2021"
+authors = ["biomeOS Team"]
+description = "VM image and package management for biomeOS ecosystem"
+license = "MIT"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+
+# Hashing
+sha2 = "0.10"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Path handling
+path-absolutize = "3.1"
+
+# Date/time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Benchscale integration (local workspace)
+benchscale = { path = "../benchScale", features = ["libvirt"] }
+
+# CLI
+clap = { version = "4.4", features = ["derive"] }
+dirs = "5.0"
+
+[dev-dependencies]
+tempfile = "3.8"
+
+[lib]
+name = "agent_reagents"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agent-reagents"
+path = "src/bin/agent-reagents.rs"
+
+[[example]]
+name = "build_cosmic_desktop"
+path = "examples/build_cosmic_desktop.rs"
+
+[[example]]
+name = "list_images"
+path = "examples/list_images.rs"
+
