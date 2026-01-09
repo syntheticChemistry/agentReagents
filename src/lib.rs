@@ -36,6 +36,8 @@ pub mod builder;
 pub mod images;
 pub mod packages;
 pub mod templates;
+pub mod discovery;
 
 // Re-export commonly used types
 pub use builder::{BuildResult, BuildState, ImageBuilder, VerificationResult};
+pub use discovery::ReagentsProvider;

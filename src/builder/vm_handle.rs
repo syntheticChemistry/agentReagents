@@ -69,6 +69,12 @@ impl VmHandle {
     /// This is a deep debt solution that prioritizes reliability and
     /// simplicity over pure-Rust implementation. For more advanced SSH
     /// needs, consider benchScale exposing ssh_exec on LibvirtBackend.
+    ///
+    /// # Evolution #18: Robust SSH Error Handling
+    ///
+    /// Now filters SSH warnings from error messages to prevent false negatives
+    /// in verification checks. SSH warnings (like "Permanently added...") are
+    /// informational and don't indicate actual command failures.
     pub async fn ssh_exec(&self, user: &str, cmd: &str) -> Result<String> {
         debug!("Executing SSH command on {}: {}", self.node.name, cmd);
 
@@ -78,6 +84,8 @@ impl VmHandle {
             .arg("StrictHostKeyChecking=no")
             .arg("-o")
             .arg("UserKnownHostsFile=/dev/null")
+            .arg("-o")
+            .arg("LogLevel=ERROR")  // Evolution #18: Suppress warnings in stderr
             .arg(format!("{}@{}", user, self.node.ip_address))
             .arg(cmd)
             .output()
@@ -85,13 +93,53 @@ impl VmHandle {
             .context("Failed to execute SSH command")?;
 
         if !output.status.success() {
+            // Evolution #18: Filter SSH warnings from error message
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let filtered_error = Self::filter_ssh_warnings(&stderr);
+            
             anyhow::bail!(
-                "SSH command failed: {}",
-                String::from_utf8_lossy(&output.stderr)
+                "Command failed with exit code {}: {}",
+                output.status.code().unwrap_or(-1),
+                if filtered_error.is_empty() {
+                    "Command returned non-zero exit code"
+                } else {
+                    filtered_error.as_str()
+                }
             );
         }
 
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    /// Filter SSH warnings from error messages (Evolution #18)
+    ///
+    /// SSH client outputs informational warnings to stderr that don't indicate
+    /// actual failures. This function filters out known benign warnings.
+    ///
+    /// Common warnings filtered:
+    /// - "Warning: Permanently added..." (host key additions)
+    /// - "Warning: Permanently added..." (ED25519/RSA key info)
+    /// - Other SSH informational messages
+    ///
+    /// # Arguments
+    /// * `stderr` - Raw stderr output from SSH command
+    ///
+    /// # Returns
+    /// Filtered error message with only actual errors
+    fn filter_ssh_warnings(stderr: &str) -> String {
+        stderr
+            .lines()
+            .filter(|line| {
+                let line_lower = line.to_lowercase();
+                // Filter out common SSH informational warnings
+                !line_lower.contains("warning: permanently added")
+                    && !line_lower.contains("warning: permanent")
+                    && !line_lower.starts_with("warning:")
+                    // Keep actual error messages
+                    && !line.trim().is_empty()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// Get cloud-init status
@@ -229,6 +277,28 @@ impl VmHandle {
             Ok(node) => Ok(node.status == benchscale::backend::NodeStatus::Running),
             Err(_) => Ok(false),
         }
+    }
+
+    /// Verify network connectivity (ping + SSH)
+    ///
+    /// Performs a comprehensive network check to ensure the VM is accessible.
+    /// This is useful for verification points during the build process.
+    ///
+    /// # Arguments
+    /// * `username` - Username for SSH connectivity check
+    ///
+    /// # Returns
+    /// Ok(()) if both ping and SSH succeed, Err otherwise
+    pub async fn verify_network(&self, username: &str) -> Result<()> {
+        use crate::builder::NetworkMonitor;
+
+        let monitor = NetworkMonitor::new(&self.node.ip_address);
+
+        // Single verification attempt with retries
+        monitor
+            .verify_once(username, 3, Duration::from_secs(5))
+            .await
+            .context("Network verification failed")
     }
 
     /// Delete the VM

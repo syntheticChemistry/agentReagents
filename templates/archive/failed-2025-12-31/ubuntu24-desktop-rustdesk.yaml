@@ -1,0 +1,166 @@
+name: ubuntu24-desktop-rustdesk
+version: 1.0.0
+description: |
+  Ubuntu 24.04 LTS + GNOME + RustDesk (CONTROL SUBSTRATE - COMPLETE)
+  All 3 layers built together via cloud-init
+  This is the CONTROL SUBSTRATE for ionChannel A/B testing
+  
+base_image: /home/flockgate/Developemt/syntheticChemistry/agentReagents/images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+
+resources:
+  memory_mb: 4096
+  vcpus: 2
+  disk_gb: 35
+  timeout_secs: 900  # 15 min for RustDesk installation
+
+users:
+  - name: ubuntutest
+    password: ubuntu123
+    groups:
+      - sudo
+      - users
+    ssh_authorized_keys: []
+
+build_steps:
+  # Layer 1: Base server packages
+  - type: install_packages
+    packages:
+      - openssh-server
+      - net-tools
+      - curl
+      - wget
+      - vim
+      - build-essential
+      - python3
+      - python3-pip
+  
+  # Layer 2: Desktop environment
+  - type: install_packages
+    packages:
+      - ubuntu-desktop-minimal
+      - gdm3
+      - gnome-terminal
+      - firefox
+      - gnome-shell-extensions
+  
+  # Layer 3: RustDesk dependencies
+  - type: install_packages
+    packages:
+      - libgtk-3-0
+      - libxcb-shape0
+      - libxcb-xfixes0
+      - libxdo3
+      - libayatana-appindicator3-1
+  
+  # Download and install RustDesk
+  - type: run_command
+    command: |
+      cd /tmp
+      wget -O rustdesk.deb https://github.com/rustdesk/rustdesk/releases/download/1.2.3/rustdesk-1.2.3-x86_64.deb
+      sudo dpkg -i rustdesk.deb || sudo apt-get install -f -y
+    description: "Download and install RustDesk"
+  
+  # Configure GDM for auto-login
+  - type: run_command
+    command: |
+      sudo tee /etc/gdm3/custom.conf > /dev/null <<'EOF'
+      [daemon]
+      AutomaticLoginEnable=true
+      AutomaticLogin=ubuntutest
+      WaylandEnable=true
+      [security]
+      [xdmcp]
+      [chooser]
+      [debug]
+      EOF
+    description: "Configure GDM3 auto-login"
+  
+  # Enable GDM3
+  - type: run_command
+    command: sudo systemctl enable gdm3
+    description: "Enable GDM3 service"
+  
+  # Configure RustDesk
+  - type: run_command
+    command: |
+      sudo mkdir -p /home/ubuntutest/.config/rustdesk
+      sudo tee /home/ubuntutest/.config/rustdesk/RustDesk.toml > /dev/null <<'EOF'
+      [options]
+      # RustDesk configuration for Wayland
+      direct-server = false
+      relay-server = ""
+      api-server = ""
+      key = ""
+      EOF
+      sudo chown -R ubuntutest:ubuntutest /home/ubuntutest/.config/rustdesk
+    description: "Configure RustDesk"
+  
+  # Enable RustDesk autostart
+  - type: run_command
+    command: |
+      sudo mkdir -p /home/ubuntutest/.config/autostart
+      sudo tee /home/ubuntutest/.config/autostart/rustdesk.desktop > /dev/null <<'EOF'
+      [Desktop Entry]
+      Type=Application
+      Name=RustDesk
+      Exec=/usr/bin/rustdesk
+      Hidden=false
+      NoDisplay=false
+      X-GNOME-Autostart-enabled=true
+      Comment=RustDesk Remote Desktop
+      EOF
+      sudo chown -R ubuntutest:ubuntutest /home/ubuntutest/.config/autostart
+    description: "Enable RustDesk autostart"
+  
+  # Create completion markers for all 3 steps
+  - type: run_command
+    command: |
+      sudo tee /root/STEP_1_COMPLETE > /dev/null <<'EOF'
+      Ubuntu 24.04 Minimal Server - Step 1 Complete (integrated)
+      Date: $(date)
+      Base packages installed
+      EOF
+    description: "Create Step 1 marker"
+  
+  - type: run_command
+    command: |
+      sudo tee /root/STEP_2_COMPLETE > /dev/null <<'EOF'
+      Ubuntu 24.04 Desktop Environment - Step 2 Complete (integrated)
+      Date: $(date)
+      Desktop: GNOME, GDM3 configured
+      EOF
+    description: "Create Step 2 marker"
+  
+  - type: run_command
+    command: |
+      sudo tee /root/STEP_3_COMPLETE > /dev/null <<'EOF'
+      Ubuntu 24.04 + GNOME + RustDesk - Step 3 Complete
+      Date: $(date)
+      RustDesk Version: 1.2.3
+      Configuration: Wayland-enabled GNOME + RustDesk
+
+      ALL STEPS COMPLETE ✅
+      This is a CONTROL SUBSTRATE for ionChannel testing.
+
+      Expected behavior:
+      - RustDesk works correctly on Ubuntu 24 GNOME/Wayland
+      - This is the baseline to compare against Pop!_OS issues
+      EOF
+    description: "Create Step 3 marker"
+
+verification:
+  required_packages:
+    - ubuntu-desktop-minimal
+    - gdm3
+    - rustdesk
+  required_services:
+    - gdm3
+  required_files:
+    - /root/STEP_1_COMPLETE
+    - /root/STEP_2_COMPLETE
+    - /root/STEP_3_COMPLETE
+    - /usr/bin/rustdesk
+  connectivity:
+    - ping: 8.8.8.8
+    - dns: google.com
+

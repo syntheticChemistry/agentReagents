@@ -35,6 +35,12 @@ chrono = { version = "0.4", features = ["serde"] }
 # Benchscale integration (local workspace)
 benchscale = { path = "../benchScale", features = ["libvirt"] }
 
+# Libvirt bindings (for lab-cleanup tool)
+virt = "0.3"
+
+# Primal substrate for discovery
+primal-substrate = { path = "../primal-substrate" }
+
 # CLI
 clap = { version = "4.4", features = ["derive"] }
 dirs = "5.0"
@@ -49,6 +55,10 @@ path = "src/lib.rs"
 [[bin]]
 name = "agent-reagents"
 path = "src/bin/agent-reagents.rs"
+
+[[bin]]
+name = "lab-cleanup"
+path = "src/bin/lab-cleanup.rs"
 
 [[example]]
 name = "build_cosmic_desktop"

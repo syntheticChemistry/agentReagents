@@ -54,7 +54,6 @@ build_steps:
       - cosmic-files
       - cosmic-term
       - cosmic-edit
-      - firefox
       - net-tools
       - openssh-server
   

@@ -1,0 +1,154 @@
+name: test-ubuntu24-fulldesktop-rustdesk
+version: 4.0.0
+description: |
+  Ubuntu 24.04 LTS with GNOME + RustDesk (NO ionChannel)
+  
+  Strategic Evolution: Isolate Variables
+  ========================================
+  After 4 identical reboot failures with ionChannel, we're applying
+  a binary search approach:
+  
+  REMOVE: ionChannel (in-house system with potential debt)
+  KEEP: Full desktop + graphics drivers + RustDesk
+  
+  This will determine if:
+  - ionChannel causes the reboot failure → Debug separately
+  - Full desktop itself has the issue → Need different approach
+  
+  Evolution #13 + #15: Combined
+  ==============================
+  ✅ Evolution #13: Graphics drivers (qxl, fbdev, vesa)
+  ✅ Evolution #15: Cloud-init timing fix
+  ❌ Evolution #13 hypothesis invalidated (not graphics)
+  🔬 New hypothesis: ionChannel causes reboot failure
+  
+  Expected Behavior:
+  - Full desktop installs in cloud-init
+  - Graphics drivers available for X.Org
+  - RustDesk installs successfully
+  - VM REBOOTS successfully (if ionChannel was the problem)
+  - If this fails too, the issue is the full desktop itself
+
+base_image: /home/flockgate/Developemt/syntheticChemistry/agentReagents/images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+
+resources:
+  memory_mb: 8192
+  vcpus: 4
+  disk_gb: 35
+  timeout_secs: 3600
+  # Evolution #10: Use DHCP for fractal scaling (no static_ip)
+
+users:
+  - name: rustdesk
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCsObPSRD1fLubJn9KDz28KabCfu2JRse9r0hLhH30p9gV+EhqyItGEjf8EoZn8wWW1uUZ7P1Sk/nlXr2MzomdWuvqj1+nRS9gNKwGPWMAZJCZ847Bfxd5jX1wLrZcLuFd/gMSBHFDRZ/JKqBvKkifaA+Vo7oN6BfCI8Xh+rfedT8DJpdoRy/W914vb07lLiXV1RvMtoRa7ETwMI6sRY70+ZVxcdyRou4E2N0R6+LHEIZAAepjXO/Fr0D7LMFKTJAIctw8JdEHT/kr4jS1W2ug2md6QJWuwSAYc5xUgSalCrpSv5tbpyvMGGi8PIxMtM4K2v1BZ9tf5+/ALtzdO4/JA0qOI/FhpvvM5EL60WWRIObMUhU8PrZ4nbfu+UXkUUvQ+42OtpNv0mlinsoHL7Ln10sfEuphn1MQe5caBjCvPIjp2YZCvIe7YDlpKs18pcpSuqY3+7CNm07rMgLgPVxL8JL73R4aIJndqZ/MQgxlS58dmrUis2uyQcfMnySY4bmywfn08zR7eqUG675hBhnx9dya4Zdc2QDAbzwlIIQJ0sPu57zzszkQtI2CdB9zQevwe3WKgaqveC6EKLF9GPIfaDI13ABMNDCMs4WuCkLovtB3kmghtu8t9XcJ91u9+gYl1qtCS6EsvSwhtmYKzpic9lKgrqR41nfX/5sXChyhOlw== biomeOS-ionChannel-validation
+
+cloud_init_timeout_secs: 1800  # 30 minutes for full desktop install
+
+build_steps:
+  # Evolution #13: Install FULL desktop + graphics drivers in cloud-init
+  # This ensures proper systemd integration and graphics support
+  - type: install_packages
+    packages:
+      # Core infrastructure
+      - openssh-server
+      - net-tools
+      - curl
+      - wget
+      - vim
+      - build-essential
+      - python3
+      - python3-pip
+      - git
+      # Full desktop environment (CRITICAL: Must be in cloud-init)
+      - ubuntu-desktop-minimal  # GNOME Shell + core desktop
+      - gdm3                     # Display manager (critical for reboot)
+      - gnome-terminal
+      - gnome-shell-extensions
+      # X11 components
+      - xserver-xorg-core
+      - xserver-xorg-input-all
+      - xserver-xorg-video-all
+      # Evolution #13: Explicit QEMU/KVM graphics drivers
+      - xserver-xorg-video-qxl      # QXL graphics for QEMU/KVM
+      - xserver-xorg-video-fbdev     # Fallback framebuffer
+      - xserver-xorg-video-vesa      # Legacy fallback
+      - x11-xserver-utils
+      - x11-utils
+      - x11-common
+      - x11-apps
+      - xauth
+      - xinit
+  - type: wait_cloud_init
+    timeout_secs: 1800  # 30 minutes for full desktop install
+
+post_boot_steps:
+  # SIMPLIFIED: Only RustDesk, NO ionChannel
+  # This isolates the variable to determine if ionChannel causes reboot failure
+  
+  # Step 1: Validate desktop environment
+  - type: run_command
+    command: "systemctl is-enabled gdm3 && test -f /usr/bin/gnome-shell  && echo 'Desktop environment ready'"
+    description: "Validate desktop installed via cloud-init"
+    timeout_secs: 30
+
+  # Step 2: Install RustDesk dependencies (Evolution #23: Ubuntu 24.04 renamed libgtk-3-0 → libgtk-3-0t64)
+  - type: install_packages
+    packages:
+      - libgtk-3-0t64
+      - libxcb-shape0
+      - libxcb-xfixes0
+      - libxdo3
+      - libayatana-appindicator3-1
+    description: "Install RustDesk dependencies"
+    timeout_secs: 300
+
+  # Step 3: Download RustDesk
+  - type: run_command
+    command: "wget -O /tmp/rustdesk-1.2.3-x86_64.deb https://github.com/rustdesk/rustdesk/releases/download/1.2.3/rustdesk-1.2.3-x86_64.deb"
+    description: "Download RustDesk"
+    timeout_secs: 180
+
+  # Step 4: Install RustDesk
+  - type: run_command
+    command: "sudo apt install -y /tmp/rustdesk-1.2.3-x86_64.deb"
+    description: "Install RustDesk package"
+    timeout_secs: 300
+
+  # Step 5: Validate RustDesk
+  - type: run_command
+    command: "which rustdesk && dpkg -l | grep rustdesk && echo 'RustDesk installed'"
+    description: "Validate RustDesk installation"
+    timeout_secs: 30
+
+  # Step 6: Enable GDM3 service
+  - type: enable_service
+    service: gdm3
+    timeout_secs: 60
+
+  # Step 7: Final system check
+  - type: run_command
+    command: "echo 'Final check:' && df -h / | tail -1 && free -h | grep Mem && systemctl is-enabled gdm3 && echo 'Full Desktop + RustDesk ready for reboot test'"
+    description: "Final system validation"
+    timeout_secs: 30
+
+  # Step 8: CRITICAL TEST - Reboot with full desktop
+  # If this succeeds: ionChannel was the problem
+  # If this fails: Full desktop itself has an issue
+  - type: reboot
+    wait_secs: 120
+
+verification:
+  # Post-reboot verification
+  required_packages:
+    - gnome-shell
+    - gdm3
+    - gnome-terminal
+    - xserver-xorg-video-qxl
+    - xserver-xorg-video-fbdev
+  required_services:
+    - gdm3
+  required_commands:
+    - rustdesk
+

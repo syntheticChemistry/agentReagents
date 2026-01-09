@@ -1,0 +1,86 @@
+name: ubuntu24-minimal-baseline
+version: 1.0.0
+description: |
+  Minimal Ubuntu 24.04 LTS baseline - no desktop
+  Fast build to prove manifest-driven architecture
+  Runtime IP discovery, enum-based steps
+  
+base_image: /home/flockgate/Developemt/syntheticChemistry/agentReagents/images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+
+resources:
+  memory_mb: 2048
+  vcpus: 2
+  disk_gb: 20
+  timeout_secs: 900
+
+users:
+  - name: iontest
+    groups:
+      - sudo
+      - users
+    sudo: true
+    shell: /bin/bash
+    lock_passwd: false
+    ssh_authorized_keys: []  # Added from CLI
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 300
+  
+  - type: install_packages
+    packages:
+      - openssh-server
+      - curl
+      - wget
+      - git
+      - build-essential
+      - htop
+      - net-tools
+      - iputils-ping
+      - vim
+  
+  - type: enable_service
+    service: ssh
+  
+  - type: create_file
+    path: /etc/ionchannel-substrate
+    content: |
+      substrate=ubuntu24-minimal
+      version=1.0.0
+      purpose=architecture-validation
+    mode: "0644"
+
+verification:
+  required_packages:
+    - openssh-server
+    - curl
+    - git
+  
+  required_services:
+    - ssh
+  
+  required_files:
+    - /usr/bin/git
+    - /usr/bin/ssh
+    - /etc/ionchannel-substrate
+  
+  verification_commands:
+    - command: systemctl is-enabled ssh
+      expected_exit_code: 0
+      description: SSH service should be enabled
+    
+    - command: test -f /etc/ionchannel-substrate
+      expected_exit_code: 0
+      description: Substrate marker should exist
+    
+    - command: id iontest
+      expected_exit_code: 0
+      description: User iontest should exist
+
+metadata:
+  os: ubuntu
+  os_version: "24.04"
+  purpose: architecture-validation
+  fast_boot: true
+  minimal: true
+

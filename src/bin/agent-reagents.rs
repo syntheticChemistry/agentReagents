@@ -203,6 +203,13 @@ async fn cmd_build(
 ) -> Result<()> {
     use agent_reagents::builder::ImageBuilder;
 
+    // AUTO-CLEANUP: Clean up orphaned VMs before starting build
+    info!("🧹 Running pre-build cleanup...");
+    if let Err(e) = cleanup_orphaned_vms().await {
+        // Non-fatal - log warning and continue
+        tracing::warn!("Pre-build cleanup failed: {}", e);
+    }
+
     // Load manifest
     let manifest =
         TemplateManifest::from_yaml_file(manifest_path).context("Failed to load manifest")?;
@@ -337,5 +344,57 @@ async fn cmd_validate(manifest_path: &PathBuf) -> Result<()> {
     println!("  Base image: {}", manifest.base_image);
     println!("  Build steps: {}", manifest.build_steps.len());
 
+    Ok(())
+}
+
+/// Auto-cleanup orphaned VMs before starting a build
+/// This prevents resource leaks and ensures a clean starting state
+async fn cleanup_orphaned_vms() -> Result<()> {
+    use benchscale::backend::libvirt::VmRegistry;
+    use virt::connect::Connect;
+    use virt::domain::Domain;
+
+    let mut registry = VmRegistry::new()?;
+    let orphans = registry.find_orphans();
+
+    if orphans.is_empty() {
+        info!("   ✅ No orphaned VMs found");
+        return Ok(());
+    }
+
+    info!("   🔍 Found {} orphaned VM(s), cleaning up...", orphans.len());
+
+    // Collect VM names to clean (avoid borrow issues)
+    let vm_names: Vec<String> = orphans.iter().map(|e| e.name.clone()).collect();
+
+    let conn = Connect::open(Some("qemu:///system"))
+        .context("Failed to connect to libvirt")?;
+
+    let mut cleaned = 0;
+    for vm_name in vm_names {
+        info!("   • Cleaning up orphaned VM: {}", vm_name);
+
+        // Destroy and undefine VM
+        if let Ok(domain) = Domain::lookup_by_name(&conn, &vm_name) {
+            if domain.is_active().unwrap_or(false) {
+                let _ = domain.destroy();
+            }
+            let _ = domain.undefine();
+        }
+
+        // Remove disk
+        let disk_path = format!("/var/lib/libvirt/images/{}.qcow2", vm_name);
+        let _ = std::fs::remove_file(&disk_path);
+
+        // Remove cloud-init ISO
+        let iso_path = format!("/var/lib/libvirt/images/{}-cidata.iso", vm_name);
+        let _ = std::fs::remove_file(&iso_path);
+
+        // Unregister from registry
+        registry.unregister(&vm_name)?;
+        cleaned += 1;
+    }
+
+    info!("   ✅ Cleaned up {} orphaned VM(s)", cleaned);
     Ok(())
 }

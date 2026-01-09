@@ -25,8 +25,17 @@ pub struct TemplateManifest {
     /// VM resources
     pub resources: ResourceConfig,
 
-    /// Build steps
+    /// Users to create (for cloud-init)
+    #[serde(default)]
+    pub users: Vec<UserConfig>,
+
+    /// Build steps (cloud-init only - keep minimal!)
     pub build_steps: Vec<BuildStep>,
+
+    /// Post-boot steps (executed via SSH after cloud-init completes)
+    /// This is where desktop packages, complex software, and configuration should go
+    #[serde(default)]
+    pub post_boot_steps: Vec<PostBootStep>,
 
     /// Verification steps
     pub verification: VerificationConfig,
@@ -59,10 +68,33 @@ pub struct ResourceConfig {
     /// Build timeout in seconds
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
+
+    /// Static IP address (optional, e.g., "192.168.122.20")
+    /// If not provided, benchScale will allocate from IP pool
+    #[serde(default)]
+    pub static_ip: Option<String>,
 }
 
 fn default_timeout() -> u64 {
     2400 // 40 minutes
+}
+
+/// User configuration for cloud-init
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserConfig {
+    /// Username
+    pub name: String,
+
+    /// Password (optional, will be hashed by cloud-init)
+    pub password: Option<String>,
+
+    /// Groups (optional)
+    #[serde(default)]
+    pub groups: Vec<String>,
+
+    /// SSH authorized keys (optional, can be overridden at build time)
+    #[serde(default)]
+    pub ssh_authorized_keys: Vec<String>,
 }
 
 /// Build step definition
@@ -117,6 +149,79 @@ fn default_cloud_init_timeout() -> u64 {
 
 fn default_reboot_wait() -> u64 {
     120 // 2 minutes
+}
+
+/// Post-boot step definition
+///
+/// These steps are executed via SSH AFTER cloud-init completes.
+/// This is the proper way to handle "heat-sensitive" operations like:
+/// - Desktop environment installation
+/// - Complex package dependencies
+/// - Application installations
+/// - System configuration that conflicts with cloud-init
+///
+/// Think of cloud-init as "autoclaving" and post-boot as "adding compounds after cooling"
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum PostBootStep {
+    /// Install packages via APT (with retry and timeout)
+    InstallPackages {
+        packages: Vec<String>,
+        #[serde(default)]
+        retry: bool,
+        #[serde(default = "default_package_timeout")]
+        timeout_secs: u64,
+        #[serde(default)]
+        description: Option<String>,
+    },
+
+    /// Run a shell command
+    RunCommand {
+        command: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        timeout_secs: u64,
+    },
+
+    /// Create a file with content
+    CreateFile {
+        path: String,
+        content: String,
+        #[serde(default = "default_file_mode")]
+        mode: String,
+        #[serde(default)]
+        owner: Option<String>,
+    },
+
+    /// Copy a file from host to VM
+    CopyFile {
+        source: String,
+        destination: String,
+        #[serde(default = "default_file_mode")]
+        mode: String,
+    },
+
+    /// Enable a systemd service
+    EnableService {
+        service: String,
+        #[serde(default)]
+        start: bool,
+    },
+
+    /// Reboot the VM and wait for it to come back
+    Reboot {
+        #[serde(default = "default_reboot_wait")]
+        wait_secs: u64,
+    },
+}
+
+fn default_package_timeout() -> u64 {
+    1800 // 30 minutes for complex packages
+}
+
+fn default_file_mode() -> String {
+    "0644".to_string()
 }
 
 /// Verification configuration
@@ -218,8 +323,11 @@ mod tests {
                 vcpus: 2,
                 disk_gb: 30,
                 timeout_secs: 2400,
+                static_ip: None,
             },
+            users: vec![],
             build_steps: vec![],
+            post_boot_steps: vec![],
             verification: VerificationConfig {
                 required_packages: vec![],
                 required_services: vec![],

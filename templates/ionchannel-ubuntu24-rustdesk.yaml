@@ -1,16 +1,17 @@
-name: ionchannel-ubuntu24-baseline
+name: ionchannel-ubuntu24-rustdesk
 version: 1.0.0
 description: |
-  Clean Ubuntu 24.04 LTS baseline for ionChannel validation
-  Fully automated, repeatable, exportable substrate
+  Ubuntu 24.04 LTS with RustDesk for ionChannel validation
+  Complete substrate: Desktop + RustDesk ready for external access
+  Fully automated, repeatable, exportable
   
-base_image: ubuntu-24.04-server-cloudimg-amd64.img
+base_image: /home/flockgate/Developemt/syntheticChemistry/agentReagents/images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
 
 resources:
   memory_mb: 4096
   vcpus: 2
   disk_gb: 30
-  timeout_secs: 2400
+  timeout_secs: 3600
 
 users:
   - name: iontest
@@ -33,8 +34,10 @@ build_steps:
       - gnome-shell-extensions
       - net-tools
       - openssh-server
+      - curl
+      - wget
   
-  # Configure GDM for auto-login (testing)
+  # Configure GDM for auto-login
   - type: create_file
     path: /etc/gdm3/custom.conf
     content: |
@@ -54,20 +57,43 @@ build_steps:
     command: systemctl set-default graphical.target
     description: Set graphical boot target
   
-  # Create marker file for validation
+  # Install RustDesk from local package
+  - type: run_command
+    command: |
+      apt-get install -y libxcb-randr0 libxcb-xtest0 libxcb-xfixes0 libxcb-shape0 libxcb-xkb1 libxcb-keysyms1 libxcb-cursor0
+    description: Install RustDesk dependencies
+  
+  - type: download_file
+    url: https://github.com/rustdesk/rustdesk/releases/download/1.2.3/rustdesk-1.2.3-x86_64.deb
+    dest: /tmp/rustdesk.deb
+  
+  - type: run_command
+    command: apt-get install -y /tmp/rustdesk.deb
+    description: Install RustDesk from .deb package
+  
+  # Configure RustDesk for unattended access
   - type: create_file
-    path: /etc/ionchannel-substrate
+    path: /home/iontest/.config/rustdesk/RustDesk.toml
     content: |
-      substrate=ubuntu24-baseline
+      [options]
+      password = "iontest123"
+    mode: "0644"
+  
+  - type: run_command
+    command: chown -R iontest:iontest /home/iontest/.config/rustdesk
+    description: Set RustDesk config ownership
+  
+  # Create marker file for validation
+  - type: run_command
+    command: |
+      cat > /etc/ionchannel-substrate <<EOF
+      substrate=ubuntu24-rustdesk
       version=1.0.0
       build_date=$(date -Iseconds)
       wayland=gnome
-    mode: "0644"
-  
-  # Save intermediate after base setup
-  - type: save_intermediate
-    name: ubuntu24-baseline-configured
-    description: Ubuntu 24.04 with desktop, before RustDesk
+      rustdesk=installed
+      EOF
+    description: Create substrate marker file
 
 verification:
   required_packages:
@@ -95,13 +121,12 @@ verification:
 
 metadata:
   purpose: ionchannel-validation
-  substrate_type: baseline
+  substrate_type: ubuntu-rustdesk
   os: ubuntu
   os_version: "24.04"
   desktop: gnome
   wayland: true
+  rustdesk: true
   exportable: true
-  intermediate_checkpoints:
-    - ubuntu24-baseline-configured
 
 

@@ -1,0 +1,196 @@
+name: ubuntu24-gnome-rustdesk
+version: 1.0.0
+base_image: /home/flockgate/Developemt/syntheticChemistry/agentReagents/images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+description: |
+  Ubuntu 24.04 LTS with GNOME Desktop and RustDesk for ionChannel validation
+  Clean, repeatable substrate with external access capability
+
+resources:
+  memory_mb: 4096
+  vcpus: 2
+  disk_gb: 30
+  timeout_secs: 1800
+
+users:
+  - name: iontest
+    password: iontest123
+    groups:
+      - sudo
+      - users
+    ssh_authorized_keys: []  # Populated at build time
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 600
+  
+  # Install GNOME desktop (minimal)
+  - type: install_packages
+    packages:
+      - ubuntu-desktop-minimal
+      - gdm3
+      - firefox
+      - gnome-terminal
+      - net-tools
+      - openssh-server
+      - curl
+      - wget
+      - vim
+  
+  # Deep Debt Solution: Disable NetworkManager to prevent network conflicts
+  # Use systemd-networkd exclusively (already configured by cloud-init with static IP)
+  # Trade-off: Loses GUI network management features, but ensures network stability
+  - type: run_command
+    command: |
+      systemctl disable NetworkManager
+      systemctl stop NetworkManager
+      systemctl mask NetworkManager
+    description: Disable NetworkManager to prevent conflicts with static IP
+  
+  # Enable systemd-networkd as the exclusive network manager
+  - type: run_command
+    command: |
+      systemctl enable systemd-networkd
+      systemctl enable systemd-resolved
+      systemctl start systemd-networkd
+      systemctl start systemd-resolved
+    description: Enable and start systemd-networkd
+  
+  # Configure GDM for auto-login (modern declarative approach)
+  - type: create_file
+    path: /etc/gdm3/custom.conf
+    content: |
+      [daemon]
+      AutomaticLoginEnable=true
+      AutomaticLogin=iontest
+      WaylandEnable=true
+      
+      [security]
+      
+      [xdmcp]
+      
+      [chooser]
+      
+      [debug]
+    mode: "0644"
+  
+  # Enable services (idiomatic: one command per service for clarity)
+  - type: enable_service
+    service: gdm3
+  
+  - type: enable_service
+    service: ssh
+  
+  # Set graphical target
+  - type: run_command
+    command: systemctl set-default graphical.target
+    description: Enable graphical boot
+  
+  # Install RustDesk dependencies
+  - type: install_packages
+    packages:
+      - libxcb-randr0
+      - libxcb-xtest0
+      - libxcb-xfixes0
+      - libxcb-shape0
+      - libxcb-xkb1
+      - libxcb-keysyms1
+      - libxcb-cursor0
+      - libgstreamer1.0-0
+      - libgstreamer-plugins-base1.0-0
+  
+  # Download RustDesk (using local file will be injected by builder)
+  - type: download_file
+    url: https://github.com/rustdesk/rustdesk/releases/download/1.2.3/rustdesk-1.2.3-x86_64.deb
+    dest: /tmp/rustdesk.deb
+  
+  # Install RustDesk
+  - type: run_command
+    command: apt-get install -y /tmp/rustdesk.deb
+    description: Install RustDesk from .deb
+  
+  # Configure RustDesk for unattended access
+  - type: run_command
+    command: |
+      mkdir -p /home/iontest/.config/rustdesk
+      cat > /home/iontest/.config/rustdesk/RustDesk.toml <<EOF
+      [options]
+      password = "iontest123"
+      EOF
+      chown -R iontest:iontest /home/iontest/.config/rustdesk
+    description: Configure RustDesk password
+  
+  # Enable RustDesk service (if systemd unit exists)
+  - type: run_command
+    command: |
+      if systemctl list-unit-files | grep -q rustdesk; then
+        systemctl enable rustdesk
+        systemctl start rustdesk
+      fi
+    description: Enable RustDesk service if available
+  
+  # Create substrate marker
+  - type: create_file
+    path: /etc/ionchannel-substrate
+    content: |
+      substrate=ubuntu24-gnome-rustdesk
+      version=1.0.0
+      build_date=$(date -Iseconds)
+      desktop=gnome
+      wayland=true
+      rustdesk=installed
+      purpose=ionchannel-validation
+    mode: "0644"
+  
+  # Clean up
+  - type: run_command
+    command: |
+      apt-get autoremove -y
+      apt-get clean
+      rm -f /tmp/rustdesk.deb
+      sync
+    description: Clean up packages and sync
+
+verification:
+  required_packages:
+    - ubuntu-desktop-minimal
+    - gdm3
+    - gnome-shell
+    - openssh-server
+  
+  required_services:
+    - gdm3
+    - ssh
+  
+  required_files:
+    - /usr/bin/gnome-shell
+    - /usr/sbin/gdm3
+    - /etc/ionchannel-substrate
+  
+  verification_commands:
+    - command: systemctl is-enabled gdm3
+      expected_exit_code: 0
+      description: GDM3 should be enabled
+    
+    - command: systemctl is-enabled ssh
+      expected_exit_code: 0
+      description: SSH should be enabled
+    
+    - command: test -f /etc/ionchannel-substrate
+      expected_exit_code: 0
+      description: Substrate marker should exist
+    
+    - command: which rustdesk
+      expected_exit_code: 0
+      description: RustDesk should be installed
+
+metadata:
+  purpose: ionchannel-validation
+  substrate_type: ubuntu-gnome-rustdesk
+  os: ubuntu
+  os_version: "24.04"
+  desktop: gnome
+  wayland: true
+  rustdesk: true
+  exportable: true
+  tested: true
+

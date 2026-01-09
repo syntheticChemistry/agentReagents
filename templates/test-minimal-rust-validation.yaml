@@ -1,0 +1,120 @@
+# Minimal Test Template - Idiomatic Rust Validation
+#
+# Purpose: Quick validation of idiomatic Rust fixes in post_boot.rs
+# Focus: Tests execute_apt_install_monitored() function
+# Duration: ~5-8 minutes expected
+
+name: "minimal-rust-test"
+version: "1.0.0"
+description: "Minimal template to validate idiomatic Rust SSH hang fixes"
+
+base_image: /home/flockgate/Developemt/syntheticChemistry/agentReagents/images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+
+resources:
+  memory_mb: 4096
+  vcpus: 2
+  disk_gb: 20
+  timeout_secs: 1200
+
+users:
+  - name: ubuntutest
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    ssh_authorized_keys:
+      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCsObPSRD1fLubJn9KDz28KabCfu2JRse9r0hLhH30p9gV+EhqyItGEjf8EoZn8wWW1uUZ7P1Sk/nlXr2MzomdWuvqj1+nRS9gNKwGPWMAZJCZ847Bfxd5jX1wLrZcLuFd/gMSBHFDRZ/JKqBvKkifaA+Vo7oN6BfCI8Xh+rfedT8DJpdoRy/W914vb07lLiXV1RvMtoRa7ETwMI6sRY70+ZVxcdyRou4E2N0R6+LHEIZAAepjXO/Fr0D7LMFKTJAIctw8JdEHT/kr4jS1W2ug2md6QJWuwSAYc5xUgSalCrpSv5tbpyvMGGi8PIxMtM4K2v1BZ9tf5+/ALtzdO4/JA0qOI/FhpvvM5EL60WWRIObMUhU8PrZ4nbfu+UXkUUvQ+42OtpNv0mlinsoHL7Ln10sfEuphn1MQe5caBjCvPIjp2YZCvIe7YDlpKs18pcpSuqY3+7CNm07rMgLgPVxL8JL73R4aIJndqZ/MQgxlS58dmrUis2uyQcfMnySY4bmywfn08zR7eqUG675hBhnx9dya4Zdc2QDAbzwlIIQJ0sPu57zzszkQtI2CdB9zQevwe3WKgaqveC6EKLF9GPIfaDI13ABMNDCMs4WuCkLovtB3kmghtu8t9XcJ91u9+gYl1qtCS6EsvSwhtmYKzpic9lKgrqR41nfX/5sXChyhOlw== biomeOS-ionChannel-validation
+
+# Evolution #12: DHCP discovery (no static_ip - parallel builds, no sudo issues)
+
+cloud_init_timeout_secs: 600
+
+# Minimal cloud-init setup
+build_steps:
+  - type: install_packages
+    packages:
+      - openssh-server
+      - net-tools
+      - curl
+      - wget
+      - vim
+    timeout_secs: 300
+    description: "Install base utilities (cloud-init)"
+
+# Post-boot steps - THESE WILL TEST IDIOMATIC RUST CODE!
+post_boot_steps:
+  # Step 1: Validation command (baseline)
+  - type: run_command
+    command: "echo 'Testing idiomatic Rust monitoring...' && uptime"
+    description: "Baseline validation"
+    timeout_secs: 30
+
+  # Step 2: Install a small package (first real test)
+  - type: install_packages
+    packages:
+      - htop
+    timeout_secs: 180
+    description: "Test 1: Single package install (htop)"
+
+  # Step 3: Verify htop installed
+  - type: run_command
+    command: "which htop && htop --version && echo 'htop installed!'"
+    description: "Verify htop installation"
+    timeout_secs: 30
+
+  # Step 4: Install multiple packages (stress test)
+  - type: install_packages
+    packages:
+      - tree
+      - jq
+      - tmux
+    timeout_secs: 300
+    description: "Test 2: Multiple package install"
+
+  # Step 5: Verify all packages
+  - type: run_command
+    command: "which tree && which jq && which tmux && echo 'All packages installed!'"
+    description: "Verify all test packages"
+    timeout_secs: 30
+
+  # Step 6: Final validation
+  - type: run_command
+    command: "echo '=== IDIOMATIC RUST TEST COMPLETE ===' && dpkg -l | grep -E '(htop|tree|jq|tmux)' && echo 'SUCCESS: All test packages verified'"
+    description: "Final validation"
+    timeout_secs: 30
+
+# Verification
+verification:
+  required_packages:
+    - openssh-server
+    - net-tools
+    - curl
+    - wget
+    - vim
+    - htop
+    - tree
+    - jq
+    - tmux
+  required_services: []
+  custom_checks:
+    - name: "Test packages installed"
+      command: "dpkg -l | grep -E '(htop|tree|jq|tmux)'"
+      expected_pattern: "htop"
+
+expected_duration_mins: 8
+build_notes: |
+  This minimal template is designed to validate the idiomatic Rust fixes:
+  
+  What we're testing:
+  1. Shell script creation on VM
+  2. Backgrounded apt-get execution
+  3. Completion marker detection
+  4. Explicit error handling with match expressions
+  5. Observability logging
+  
+  What to watch for in logs:
+  - "📝 Creating install script: /tmp/apt_install_*.sh"
+  - "🚀 Launching: apt-get install htop"
+  - "🔍 Completion check: status='done'"
+  - "✅ apt-get install completed"
+  - "⚠️  SSH check failed: {error} (will retry)" (only if errors occur)
+  
+  This is the FIRST REAL TEST of Evolution #7: SSH Hang → Idiomatic Rust
+

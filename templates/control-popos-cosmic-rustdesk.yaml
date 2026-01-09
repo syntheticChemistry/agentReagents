@@ -1,0 +1,160 @@
+name: control-popos-cosmic-rustdesk
+version: 1.0.0
+description: |
+  Pop!_OS 24.04 with COSMIC desktop + RustDesk (CONTROL SUBSTRATE)
+  Expected behavior: RustDesk will have Wayland issues on COSMIC
+  This is the baseline to demonstrate ionChannel fixes the issue
+  
+base_image: /home/flockgate/Developemt/syntheticChemistry/agentReagents/images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+
+resources:
+  memory_mb: 4096
+  vcpus: 2
+  disk_gb: 30
+  timeout_secs: 3600
+
+users:
+  - name: poptest
+    password: poptest123
+    groups:
+      - sudo
+      - users
+    ssh_authorized_keys: []
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 600
+  
+  # Add COSMIC repository
+  - type: run_command
+    command: |
+      wget -qO- https://apt.pop-os.org/key.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/pop-os.gpg > /dev/null
+    description: Add Pop!_OS repository key
+  
+  - type: run_command
+    command: |
+      echo "deb http://apt.pop-os.org/release noble main" | tee /etc/apt/sources.list.d/system76-cosmic.list
+    description: Add COSMIC repository
+  
+  - type: run_command
+    command: apt-get update
+    description: Update package lists
+  
+  # Install COSMIC desktop
+  - type: install_packages
+    packages:
+      - cosmic-session
+      - cosmic-greeter
+      - cosmic-comp
+      - cosmic-panel
+      - cosmic-launcher
+      - cosmic-applets
+      - cosmic-settings
+      - cosmic-files
+      - cosmic-term
+      - cosmic-edit
+      - net-tools
+      - openssh-server
+      - curl
+      - wget
+  
+  # Configure COSMIC greeter for auto-login
+  - type: create_file
+    path: /etc/cosmic-greeter/cosmic-greeter.toml
+    content: |
+      [autologin]
+      user = "poptest"
+      enabled = true
+    mode: "0644"
+  
+  - type: enable_service
+    service: cosmic-greeter
+  
+  - type: enable_service
+    service: ssh
+  
+  - type: run_command
+    command: systemctl set-default graphical.target
+    description: Set graphical boot target
+  
+  # Install RustDesk (will have Wayland issues on COSMIC)
+  - type: run_command
+    command: |
+      apt-get install -y libxcb-randr0 libxcb-xtest0 libxcb-xfixes0 libxcb-shape0 libxcb-xkb1 libxcb-keysyms1 libxcb-cursor0
+    description: Install RustDesk dependencies
+  
+  - type: download_file
+    url: https://github.com/rustdesk/rustdesk/releases/download/1.2.3/rustdesk-1.2.3-x86_64.deb
+    dest: /tmp/rustdesk.deb
+  
+  - type: run_command
+    command: apt-get install -y /tmp/rustdesk.deb
+    description: Install RustDesk from .deb package
+  
+  # Configure RustDesk for unattended access
+  - type: create_file
+    path: /home/poptest/.config/rustdesk/RustDesk.toml
+    content: |
+      [options]
+      password = "poptest123"
+    mode: "0644"
+  
+  - type: run_command
+    command: chown -R poptest:poptest /home/poptest/.config/rustdesk
+    description: Set RustDesk config ownership
+  
+  # Create marker file for validation
+  - type: run_command
+    command: |
+      cat > /etc/ionchannel-substrate <<EOF
+      substrate=control-popos-cosmic-rustdesk
+      version=1.0.0
+      build_date=$(date -Iseconds)
+      wayland=cosmic
+      rustdesk=installed
+      expected_issue=wayland_incompatibility
+      control_type=baseline
+      EOF
+    description: Create substrate marker file
+
+verification:
+  required_packages:
+    - cosmic-session
+    - cosmic-greeter
+    - cosmic-comp
+  
+  required_services:
+    - cosmic-greeter
+    - ssh
+  
+  required_files:
+    - /usr/bin/cosmic-session
+    - /usr/bin/cosmic-comp
+    - /usr/bin/rustdesk
+    - /etc/ionchannel-substrate
+  
+  verification_commands:
+    - command: systemctl is-enabled cosmic-greeter
+      expected_exit_code: 0
+      description: COSMIC greeter should be enabled
+    
+    - command: which rustdesk
+      expected_exit_code: 0
+      description: RustDesk should be installed
+    
+    - command: test -f /etc/ionchannel-substrate
+      expected_exit_code: 0
+      description: Substrate marker file should exist
+
+metadata:
+  purpose: ionchannel-ab-testing
+  substrate_type: control-popos-cosmic-rustdesk
+  os: pop-os
+  os_version: "24.04"
+  desktop: cosmic
+  wayland: true
+  rustdesk: true
+  control_type: baseline
+  expected_behavior: rustdesk_wayland_issues
+  exportable: true
+

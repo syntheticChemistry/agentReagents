@@ -1,0 +1,66 @@
+name: ubuntu24-server-minimal
+version: 1.0.0
+description: |
+  Ubuntu 24.04 LTS Server - Minimal Installation (Step 1 of 3)
+  This is the BASE SUBSTRATE - no desktop, just SSH server
+  Desktop will be added in Step 2 via post-boot script
+  
+base_image: /home/flockgate/Developemt/syntheticChemistry/agentReagents/images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+
+resources:
+  memory_mb: 4096  # Reduced back to 4GB for minimal server
+  vcpus: 2
+  disk_gb: 30
+  timeout_secs: 600  # 10 min should be plenty for minimal server
+
+users:
+  - name: ubuntutest
+    password: ubuntu123
+    groups:
+      - sudo
+      - users
+    ssh_authorized_keys: []
+
+build_steps:
+  # Step 1: Wait for cloud-init (should be fast - no desktop packages)
+  - type: wait_cloud_init
+    timeout_secs: 300  # 5 minutes max
+  
+  # Step 2: Install ONLY essential packages
+  - type: install_packages
+    packages:
+      - openssh-server
+      - net-tools
+      - curl
+      - wget
+      - vim
+      - build-essential
+      - python3
+      - python3-pip
+  
+  # Step 3: Enable root login for testing (temporary)
+  - type: run_command
+    command: |
+      sudo sed -i 's/PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+      sudo systemctl restart sshd
+  
+  # Step 4: Create marker file to indicate Step 1 complete
+  - type: create_file
+    path: /root/STEP_1_COMPLETE
+    content: |
+      Ubuntu 24.04 Minimal Server - Step 1 Complete
+      Date: {{ timestamp }}
+      Next: Install desktop environment
+    mode: "0644"
+
+verification:
+  required_packages:
+    - openssh-server
+    - curl
+    - wget
+  required_services:
+    - ssh
+  connectivity:
+    - ping: 8.8.8.8
+    - dns: google.com
+

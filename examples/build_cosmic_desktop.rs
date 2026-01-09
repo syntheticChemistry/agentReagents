@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
     println!();
 
     // Create manifest for COSMIC desktop build
-    use agent_reagents::templates::{TemplateManifest, ResourceConfig, VerificationConfig};
+    use agent_reagents::templates::{ResourceConfig, TemplateManifest, VerificationConfig};
     let manifest = TemplateManifest {
         name: "popos-cosmic-desktop".to_string(),
         version: "1.0.0".to_string(),
@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
         created: None,
         checksum: None,
     };
-    
+
     // Create manifest-driven builder
     let mut builder = ImageBuilder::from_manifest(manifest);
 

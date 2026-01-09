@@ -38,7 +38,6 @@ build_steps:
       - cosmic-files
       - cosmic-term
       - cosmic-edit
-      - firefox
   
   - type: enable_service
     service: cosmic-greeter
