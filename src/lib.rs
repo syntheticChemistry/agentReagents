@@ -5,8 +5,18 @@
 //! # Modules
 //!
 //! - `builder` - Image builder with async state machine and verification
-//! - `images` - Image management and discovery
+//! - `images` - Image management
 //! - `packages` - Package management
+//! - `templates` - Template manifest system
+//!
+//! # Service Discovery
+//!
+//! **Note**: agentReagents does NOT provide custom service discovery.
+//!
+//! For runtime backend selection, use standard solutions:
+//! - **mDNS/DNS-SD**: Local network discovery (Avahi, Bonjour)
+//! - **Consul**: Distributed service registry
+//! - **Environment variables**: Explicit configuration (recommended)
 //!
 //! # Example
 //!
@@ -36,8 +46,10 @@ pub mod builder;
 pub mod images;
 pub mod packages;
 pub mod templates;
-pub mod discovery;
+
+// Discovery: Use standard solutions (mDNS, DNS-SD, Consul)
+// NOT creating custom substrate - primal philosophy is to use existing capabilities
+// Archived: src/discovery.rs (was using phantom primal-substrate dependency)
 
 // Re-export commonly used types
 pub use builder::{BuildResult, BuildState, ImageBuilder, VerificationResult};
-pub use discovery::ReagentsProvider;

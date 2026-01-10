@@ -6,6 +6,10 @@ authors = ["biomeOS Team"]
 description = "VM image and package management for biomeOS ecosystem"
 license = "MIT"
 
+[workspace]
+# This is a standalone project, NOT part of a parent workspace
+# Each syntheticChemistry project is sovereign and independently versioned
+
 [dependencies]
 # Async runtime
 tokio = { version = "1.35", features = ["full"] }
@@ -38,8 +42,12 @@ benchscale = { path = "../benchScale", features = ["libvirt"] }
 # Libvirt bindings (for lab-cleanup tool)
 virt = "0.3"
 
-# Primal substrate for discovery
-primal-substrate = { path = "../primal-substrate" }
+# Discovery: Use standard solutions (mDNS, DNS-SD, Consul)
+# NOT creating custom substrate - primal philosophy is to use existing capabilities
+# For service discovery, consumers should use:
+# - mDNS/DNS-SD for local network discovery
+# - Consul for distributed service discovery
+# - Environment variables for explicit configuration
 
 # CLI
 clap = { version = "4.4", features = ["derive"] }
