@@ -1,0 +1,131 @@
+#cloud-config
+# ecoprimals-node.yaml — Cloud-init config for ecoPrimals gate VMs
+#
+# Used by benchScale libvirt backend (Tier 2) to provision VMs that run
+# primal binaries from plasmidBin. Designed for Ubuntu 24.04 cloud images.
+#
+# Primals are musl-static binaries with zero runtime dependencies, so this
+# config is intentionally minimal: create user, set up directories, open ports.
+#
+# Usage with benchScale:
+#   benchscale create --topology ecoprimals-nucleus-3node --hypervisor qemu \
+#     --cloud-init configs/ecoprimals-node.yaml
+#
+# Or manually with virt-install:
+#   virt-install --cloud-init user-data=ecoprimals-node.yaml ...
+
+users:
+  - name: ecoprimals
+    groups: [sudo, docker]
+    shell: /bin/bash
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: false
+    # REQUIRED: Replace with your actual SSH public key before use.
+    # Generate with: ssh-keygen -t ed25519 -C "ecoprimals@gate"
+    # Then paste the contents of ~/.ssh/id_ed25519.pub below.
+    ssh_authorized_keys:
+      - "ssh-ed25519 CHANGEME_INSERT_YOUR_PUBLIC_KEY ecoprimals@gate"
+
+package_update: true
+package_upgrade: false
+
+packages:
+  # Networking diagnostics and traffic shaping (primals themselves need nothing)
+  - net-tools
+  - iproute2
+  - iptables
+  - curl
+  - jq
+  # Debugging (optional, remove for production)
+  - htop
+  - strace
+
+write_files:
+  # Directory structure matching plasmidBin layout
+  - path: /opt/ecoprimals/bin/.gitkeep
+    content: ""
+    permissions: "0755"
+  - path: /opt/ecoprimals/graphs/.gitkeep
+    content: ""
+    permissions: "0755"
+  - path: /opt/ecoprimals/config/.gitkeep
+    content: ""
+    permissions: "0755"
+  - path: /opt/ecoprimals/logs/.gitkeep
+    content: ""
+    permissions: "0755"
+
+  # Systemd service template for primals.
+  # ${PORT} and ${FAMILY_ID} are expanded from EnvironmentFile at runtime.
+  # Create /opt/ecoprimals/config/ports.env with PORT=<port> FAMILY_ID=<id>
+  # for each primal instance, or per-primal overrides in /opt/ecoprimals/config/<primal>.env.
+  - path: /etc/systemd/system/ecoprimals@.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=ecoPrimals %i
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=ecoprimals
+      ExecStart=/opt/ecoprimals/bin/%i server --listen 0.0.0.0:${PORT} --family-id ${FAMILY_ID}
+      Environment=RUST_LOG=info
+      EnvironmentFile=-/opt/ecoprimals/config/ports.env
+      EnvironmentFile=-/opt/ecoprimals/config/%i.env
+      Restart=on-failure
+      RestartSec=5
+      StandardOutput=journal
+      StandardError=journal
+      SyslogIdentifier=ecoprimals-%i
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Port-forwarding setup script for NAT-ed nodes
+  - path: /opt/ecoprimals/config/setup-ports.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Open primal TCP ports through UFW / iptables
+      set -euo pipefail
+      PORTS="9100 9200 9300 9400 9500 9600 9800 9110 9120 9130 9140 9150"
+      if command -v ufw &>/dev/null; then
+        for p in $PORTS; do
+          ufw allow "$p/tcp" 2>/dev/null || true
+        done
+        ufw --force enable 2>/dev/null || true
+      else
+        for p in $PORTS; do
+          iptables -A INPUT -p tcp --dport "$p" -j ACCEPT 2>/dev/null || true
+        done
+      fi
+
+
+runcmd:
+  # Create ecoprimals directory structure
+  - mkdir -p /opt/ecoprimals/{bin,graphs,config,logs}
+  - chown -R ecoprimals:ecoprimals /opt/ecoprimals
+
+  # Generate default ports.env if not present (deploy script may overwrite)
+  - |
+    if [ ! -f /opt/ecoprimals/config/ports.env ]; then
+      cat > /opt/ecoprimals/config/ports.env <<'ENVEOF'
+    PORT=9100
+    FAMILY_ID=default
+    ENVEOF
+      chown ecoprimals:ecoprimals /opt/ecoprimals/config/ports.env
+    fi
+
+  # Open primal ports (9100-9800 for core primals, 9110-9150 for springs)
+  - bash /opt/ecoprimals/config/setup-ports.sh
+
+  # Enable IP forwarding for NAT simulation if needed
+  - sysctl -w net.ipv4.ip_forward=1
+
+  # Signal that cloud-init is complete
+  - touch /opt/ecoprimals/.cloud-init-done
+  - echo "ecoPrimals node ready at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> /opt/ecoprimals/logs/init.log
+
+final_message: "ecoPrimals gate VM ready after $UPTIME seconds"

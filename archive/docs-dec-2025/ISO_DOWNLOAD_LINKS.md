@@ -1,5 +1,8 @@
 # ISO Download Links
 
+> **Legacy Document** — This guide references the syntheticChemistry/ionChannel era.
+> For current ecoPrimals validation, see `specs/AGENTREAGENTS_EVOLUTION.md`.
+
 Download these ISOs on your target tower before using the agentReagents archive.
 
 ## Pop!_OS ISOs
@@ -88,5 +91,5 @@ Once ISOs are downloaded:
 1. Extract the agentReagents archive from USB
 2. Place ISOs in `agentReagents/isos/`
 3. Place cloud images in `agentReagents/images/cloud/`
-4. Run validation: `cd ionChannel && cargo run --bin ab-validation --features benchscale`
+4. Run validation: `cd ../benchScale && ./scripts/create-lab.sh --topology ecoprimals-tower-2node --name my-lab --hypervisor qemu` (or from this repo: `cd ../../springs/primalSpring && ./scripts/validate_local_lab.sh --topology ecoprimals-tower-2node`)
 

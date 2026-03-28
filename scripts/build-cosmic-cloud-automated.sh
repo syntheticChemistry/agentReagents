@@ -2,17 +2,19 @@
 # Build Pop!_OS/COSMIC Template using Cloud-Init (Automated)
 # Much faster than manual installation!
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REAGENTS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "$SCRIPT_DIR/../configs/defaults.env" 2>/dev/null || source "${REAGENTS_ROOT:-$(dirname "$SCRIPT_DIR")}/configs/defaults.env" 2>/dev/null || true
+
+LIBVIRT_IMAGES="${LIBVIRT_IMAGES:-/var/lib/libvirt/images}"
 
 # Use Ubuntu 24.04 cloud image as base, then add COSMIC
-BASE_IMAGE="${REAGENTS_ROOT}/images/cloud/ubuntu-22.04-server-cloudimg-amd64.img"
 RUSTDESK_DEB="${REAGENTS_ROOT}/debs/remote-desktop/rustdesk-1.2.3-x86_64.deb"
 VM_NAME="popos-cosmic-cloud-builder"
-WORK_DISK="/var/lib/libvirt/images/${VM_NAME}.qcow2"
-FINAL_TEMPLATE="/var/lib/libvirt/images/popos-cosmic-rustdesk-template.qcow2"
+WORK_DISK="${LIBVIRT_IMAGES}/${VM_NAME}.qcow2"
+FINAL_TEMPLATE="${LIBVIRT_IMAGES}/popos-cosmic-rustdesk-template.qcow2"
 
 echo "╔══════════════════════════════════════════════════════════════════════╗"
 echo "║                                                                      ║"
@@ -23,7 +25,7 @@ echo "╚═══════════════════════�
 echo ""
 
 # Download Ubuntu 24.04 cloud image if we don't have it
-UBUNTU_24_CLOUD="${REAGENTS_ROOT}/images/cloud/ubuntu-24.04-server-cloudimg-amd64.img"
+UBUNTU_24_CLOUD="${REAGENTS_ROOT}/images/cloud/${CLOUD_IMAGE_UBUNTU_2404:-ubuntu-24.04-server-cloudimg-amd64.img}"
 if [ ! -f "${UBUNTU_24_CLOUD}" ]; then
     echo "📥 Downloading Ubuntu 24.04 cloud image..."
     mkdir -p "${REAGENTS_ROOT}/images/cloud"
@@ -34,23 +36,23 @@ fi
 
 BASE_IMAGE="${UBUNTU_24_CLOUD}"
 
-echo "✅ Using cloud image: $(basename ${BASE_IMAGE})"
-echo "✅ RustDesk: $(basename ${RUSTDESK_DEB})"
+echo "✅ Using cloud image: $(basename "${BASE_IMAGE}")"
+echo "✅ RustDesk: $(basename "${RUSTDESK_DEB}")"
 echo ""
 
 # Copy base image to libvirt directory
 echo "📋 Preparing base image..."
-sudo cp "${BASE_IMAGE}" /var/lib/libvirt/images/ubuntu-24-base.qcow2
-sudo chown libvirt-qemu:kvm /var/lib/libvirt/images/ubuntu-24-base.qcow2
+sudo cp "${BASE_IMAGE}" "${LIBVIRT_IMAGES}/ubuntu-24-base.qcow2"
+sudo chown libvirt-qemu:kvm "${LIBVIRT_IMAGES}/ubuntu-24-base.qcow2"
 
 # Create working disk from base
 echo "💿 Creating 25GB working disk..."
-sudo qemu-img create -f qcow2 -b /var/lib/libvirt/images/ubuntu-24-base.qcow2 -F qcow2 "${WORK_DISK}" 25G
+sudo qemu-img create -f qcow2 -b "${LIBVIRT_IMAGES}/ubuntu-24-base.qcow2" -F qcow2 "${WORK_DISK}" 25G
 sudo qemu-img resize "${WORK_DISK}" 25G
 
 # Copy RustDesk to accessible location
 echo "📦 Preparing RustDesk package..."
-sudo cp "${RUSTDESK_DEB}" /var/lib/libvirt/images/rustdesk.deb
+sudo cp "${RUSTDESK_DEB}" "${LIBVIRT_IMAGES}/rustdesk.deb"
 
 # Generate SSH key
 TEMP_DIR=$(mktemp -d)
@@ -64,7 +66,7 @@ USER_DATA="${TEMP_DIR}/user-data"
 cat > "${USER_DATA}" << EOF
 #cloud-config
 users:
-  - name: iontest
+  - name: ${VM_USER}
     groups: users, admin, sudo
     sudo: ALL=(ALL) NOPASSWD:ALL
     shell: /bin/bash
@@ -74,7 +76,7 @@ users:
 
 chpasswd:
   list: |
-    iontest:iontest123
+    ${VM_USER}:${VM_PASSWORD}
   expire: false
 
 package_update: true
@@ -99,14 +101,14 @@ runcmd:
   
   # Install RustDesk
   - echo "Installing RustDesk..."
-  - cp /var/lib/libvirt/images/rustdesk.deb /tmp/rustdesk.deb
+  - cp "${LIBVIRT_IMAGES}/rustdesk.deb" /tmp/rustdesk.deb
   - DEBIAN_FRONTEND=noninteractive apt-get install -y --fix-broken /tmp/rustdesk.deb || true
   - apt-get install -f -y
   
   # Configure RustDesk auto-start
-  - mkdir -p /home/iontest/.config/autostart
+  - mkdir -p /home/${VM_USER}/.config/autostart
   - |
-    cat > /home/iontest/.config/autostart/rustdesk.desktop << 'RUSTDESK_EOF'
+    cat > /home/${VM_USER}/.config/autostart/rustdesk.desktop << 'RUSTDESK_EOF'
     [Desktop Entry]
     Type=Application
     Name=RustDesk
@@ -115,7 +117,7 @@ runcmd:
     NoDisplay=false
     X-GNOME-Autostart-enabled=true
     RUSTDESK_EOF
-  - chown -R iontest:iontest /home/iontest/.config
+  - chown -R ${VM_USER}:${VM_USER} /home/${VM_USER}/.config
   
   # Clean up
   - rm -f /tmp/rustdesk.deb
@@ -191,7 +193,7 @@ sudo chown $(whoami):$(whoami) "${REAGENTS_TEMPLATE}"
 
 # Cleanup
 rm -rf "${TEMP_DIR}"
-sudo rm -f /var/lib/libvirt/images/rustdesk.deb
+sudo rm -f "${LIBVIRT_IMAGES}/rustdesk.deb"
 
 TEMPLATE_SIZE=$(du -h "${FINAL_TEMPLATE}" | cut -f1)
 
@@ -207,10 +209,10 @@ echo "📦 Contents:"
 echo "   • Ubuntu 24.04 base"
 echo "   • COSMIC desktop (Wayland)"
 echo "   • RustDesk 1.2.3"
-echo "   • User: iontest / iontest123"
+echo "   • User: ${VM_USER} / ${VM_PASSWORD}"
 echo ""
-echo "🚀 Ready to use:"
-echo "   cd ../../ionChannel"
-echo "   cargo run --bin ab-validation --features benchscale"
+echo "Ready to use:"
+echo "   cd ../benchScale"
+echo "   ./scripts/create-lab.sh --topology ecoprimals-tower-2node --name test"
 echo ""
 

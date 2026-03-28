@@ -1,91 +1,65 @@
 # agentReagents Manifest
 
-**Last Updated:** December 27, 2025
+**Last Updated:** March 28, 2026
 
-This file tracks all artifacts stored in agentReagents.
-
----
-
-## Format
-
-```
-filename | category | description | date | source
-```
+This file tracks all artifacts stored in or downloadable by agentReagents.
+Large artifacts (ISOs, images, debs) are git-ignored and populated by scripts.
 
 ---
 
 ## Current Inventory
 
-### Images (images/)
+### Cloud Images (`images/cloud/`)
 
-*(No entries yet - add Ubuntu cloud images here)*
+| Artifact | Size | Source | Download Script |
+|----------|------|--------|-----------------|
+| `ubuntu-22.04-server-cloudimg-amd64.img` | ~620 MB | cloud-images.ubuntu.com | `download-cloud-images.sh` |
+| `ubuntu-24.04-server-cloudimg-amd64.img` | ~650 MB | cloud-images.ubuntu.com | `download-cloud-images.sh` |
 
-**Recommended:**
-- ubuntu-22.04-server-cloudimg-amd64.img | Cloud-init enabled base image
+### Packages (`debs/`)
 
-### Packages (debs/)
+| Artifact | Size | Source | Download Script |
+|----------|------|--------|-----------------|
+| `debs/remote-desktop/rustdesk-1.2.3-x86_64.deb` | ~18 MB | github.com/rustdesk | `download-packages.sh` |
 
-*(No entries yet - add .deb packages here)*
+### ISOs (`isos/`)
 
-**Recommended:**
-- rustdesk-1.2.3-x86_64.deb | Remote desktop for testing
+| Artifact | Size | Source | Download Script |
+|----------|------|--------|-----------------|
+| `pop-os_22.04_amd64_nvidia_22.iso` | ~2.8 GB | pop.system76.com | `download-isos.sh` |
+| `ubuntu-24.04.1-desktop-amd64.iso` | ~5.7 GB | releases.ubuntu.com | `download-isos.sh` |
 
-### ISOs (isos/)
+### Configurations (`configs/`)
 
-*(No entries yet - add ISO images here)*
+| Artifact | Tracked | Description |
+|----------|---------|-------------|
+| `ecoprimals-node.yaml` | git-tracked | Cloud-init config for ecoPrimals gate VMs |
 
-### Binaries (bins/)
+### Binaries (`bins/`)
 
-*(No entries yet - add compiled binaries here)*
+Empty — primal binaries live in `plasmidBin`, not here.
 
-### Archives (tars/)
+### Templates (`images/templates/`)
 
-*(No entries yet - add compressed archives here)*
+Built locally by template build scripts, not downloaded. `.qcow2` files.
 
-### Configurations (configs/)
+### Archives (`tars/`)
 
-*(No entries yet - add config templates here)*
+Empty — reserved for compressed artifact bundles.
 
-### Scripts (scripts/)
+---
 
-*(No entries yet - add utility scripts here)*
+## Verification
+
+Checksums for downloaded artifacts are in `docs/CHECKSUMS.md`.
+Run `scripts/verify-setup.sh` to check integrity.
 
 ---
 
 ## How to Update
 
-When adding a file:
+When adding a downloaded artifact, update this file and `docs/CHECKSUMS.md`:
+
 ```bash
-echo "filename.ext | category | description | $(date +%Y-%m-%d) | source-url" >> agentReagents/docs/MANIFEST.md
+sha256sum path/to/artifact >> docs/CHECKSUMS.md
 ```
-
-When removing a file:
-```bash
-# Move to archive first
-mv agentReagents/category/file ../archive/agentReagents/
-
-# Document in CHANGELOG.md
-echo "Removed: file | $(date +%Y-%m-%d) | Reason" >> agentReagents/docs/CHANGELOG.md
-```
-
----
-
-## Quick Downloads
-
-### Ubuntu Cloud Image
-```bash
-cd agentReagents/images/cloud
-wget https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-amd64.img
-echo "ubuntu-22.04-server-cloudimg-amd64.img | images/cloud | Ubuntu 22.04 cloud-init | $(date +%Y-%m-%d) | cloud-images.ubuntu.com" >> ../../docs/MANIFEST.md
-```
-
-### RustDesk
-```bash
-cd agentReagents/debs/remote-desktop
-wget https://github.com/rustdesk/rustdesk/releases/download/1.2.3/rustdesk-1.2.3-x86_64.deb
-echo "rustdesk-1.2.3-x86_64.deb | debs/remote-desktop | RustDesk v1.2.3 | $(date +%Y-%m-%d) | github.com/rustdesk" >> ../../docs/MANIFEST.md
-```
-
-ubuntu-22.04-server-cloudimg-amd64.img | images/cloud | Ubuntu 22.04 cloud-init enabled | 2025-12-27 | cloud-images.ubuntu.com
-rustdesk-1.2.3-x86_64.deb | debs/remote-desktop | RustDesk v1.2.3 remote desktop | 2025-12-27 | github.com/rustdesk
-pop-os_22.04_amd64_nvidia_22.iso | isos | Pop!_OS 22.04 with NVIDIA drivers | 2025-12-27 | pop.system76.com

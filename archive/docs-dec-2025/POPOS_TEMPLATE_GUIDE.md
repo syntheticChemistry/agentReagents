@@ -1,5 +1,8 @@
 # 🎯 Pop!_OS + COSMIC Template Creation Guide
 
+> **Legacy Document** — This guide references the syntheticChemistry/ionChannel era.
+> For current ecoPrimals validation, see `specs/AGENTREAGENTS_EVOLUTION.md`.
+
 ## ✅ Resources Available
 
 You have everything needed in `agentReagents`:

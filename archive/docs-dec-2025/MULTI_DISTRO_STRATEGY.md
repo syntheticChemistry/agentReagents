@@ -1,5 +1,8 @@
 # 🎯 Multi-Distribution Validation Strategy
 
+> **Legacy Document** — This guide references the syntheticChemistry/ionChannel era.
+> For current ecoPrimals validation, see `specs/AGENTREAGENTS_EVOLUTION.md`.
+
 ## ✅ Available ISOs
 
 We now have **3 distributions** for comprehensive testing:

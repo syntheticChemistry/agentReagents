@@ -14,7 +14,7 @@ FINAL_TEMPLATE="/var/lib/libvirt/images/popos-24.04-cosmic-rustdesk-template.qco
 echo "╔══════════════════════════════════════════════════════════════════════╗"
 echo "║                                                                      ║"
 echo "║  Building Pop!_OS 24.04 + COSMIC + RustDesk Template                ║"
-echo "║  Primary Target for ionChannel Validation                           ║"
+echo "║  Primary Target for ecoPrimals Validation                           ║"
 echo "║                                                                      ║"
 echo "╚══════════════════════════════════════════════════════════════════════╝"
 echo ""

@@ -1,5 +1,8 @@
 # 🎯 Pop!_OS 24.04 + COSMIC Template Creation
 
+> **Legacy Document** — This guide references the syntheticChemistry/ionChannel era.
+> For current ecoPrimals validation, see `specs/AGENTREAGENTS_EVOLUTION.md`.
+
 ## ✅ You're Right - We Need COSMIC!
 
 Pop!_OS 22.04 doesn't have COSMIC yet. **COSMIC is in Pop!_OS 24.04 LTS** (currently in alpha/beta).

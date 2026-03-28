@@ -2,10 +2,11 @@
 # agentReagents Setup Script
 # Automated setup for new towers - downloads all required binaries
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REAGENTS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "$SCRIPT_DIR/../configs/defaults.env" 2>/dev/null || source "${REAGENTS_ROOT:-$(dirname "$SCRIPT_DIR")}/configs/defaults.env" 2>/dev/null || true
 
 echo "╔══════════════════════════════════════════════════════════════════════╗"
 echo "║                                                                      ║"
@@ -105,6 +106,6 @@ echo "║  • RustDesk packages                                                
 echo "║                                                                      ║"
 echo "║  Next Steps:                                                         ║"
 echo "║  • Build templates: sudo bash scripts/build-cosmic-cloud-automated.sh║"
-echo "║  • Run validation: cd ../ionChannel && cargo run --bin ab-validation ║"
+echo "║  • Run validation: cd ../benchScale && ./scripts/run-tests.sh        ║"
 echo "╚══════════════════════════════════════════════════════════════════════╝"
 

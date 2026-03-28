@@ -1,6 +1,6 @@
 # agentReagents Setup Guide
 
-This repository contains scripts, configs, and automation for building VM templates and running validation tests for the ionChannel project. All large binaries (ISOs, images) are downloaded via automated scripts.
+This repository contains scripts, configs, and automation for the ecoPrimals infrastructure supply chain: VM templates, shared ISOs and cloud images, and validation hooks for benchScale and primalSpring. All large binaries (ISOs, images) are downloaded via automated scripts.
 
 ## Quick Start (New Tower Setup)
 
@@ -87,11 +87,11 @@ This downloads:
 Build VM templates for faster testing:
 
 ```bash
-# Pop!_OS 22 + COSMIC + RustDesk
+# Ubuntu cloud image → COSMIC desktop + RustDesk (active golden-path builder)
 sudo bash scripts/build-cosmic-cloud-automated.sh
 
-# Ubuntu 22 + RustDesk
-sudo bash scripts/build-rustdesk-template.sh
+# Ubuntu 22 + RustDesk (legacy; Pop!_OS–era pipeline — see scripts/legacy/)
+sudo bash scripts/legacy/build-rustdesk-template.sh
 ```
 
 ## Directory Structure
@@ -99,6 +99,7 @@ sudo bash scripts/build-rustdesk-template.sh
 ```
 agentReagents/
 ├── scripts/               # Build & setup automation (git tracked)
+│   └── legacy/            # Pop!_OS / older template builders (reference)
 ├── configs/               # Cloud-init configs (git tracked)
 ├── docs/                  # Documentation (git tracked)
 ├── isos/                  # OS ISOs (downloaded, ~13GB)
@@ -143,16 +144,22 @@ bash scripts/verify-setup.sh
 # Proceed with template building or validation
 ```
 
-## Integration with ionChannel
+## Integration with benchScale and primalSpring
 
-Once agentReagents is set up, use it for ionChannel validation:
+Once agentReagents is set up, point benchScale at the shared cloud images and create a lab:
 
 ```bash
-# Navigate to ionChannel project
-cd ~/Development/syntheticChemistry/ionChannel
+# From infra: agentReagents and benchScale are siblings under ecoPrimals/infra/
+cd ~/Development/ecoPrimals/infra/benchScale
+export BENCHSCALE_BASE_IMAGE_PATH="$(pwd)/../agentReagents/images/cloud"
+./scripts/create-lab.sh --topology ecoprimals-tower-2node --name validation-lab --hypervisor qemu
+```
 
-# Run A/B validation (uses agentReagents templates)
-cargo run --bin ab-validation --features benchscale
+For primalSpring Tier-2 checks (auto-discovers plasmidBin and benchScale):
+
+```bash
+cd ~/Development/ecoPrimals/springs/primalSpring
+./scripts/validate_local_lab.sh --topology ecoprimals-tower-2node
 ```
 
 ## Updating agentReagents
@@ -205,5 +212,5 @@ When adding new resources:
 
 - [ISO Download Links](ISO_DOWNLOAD_LINKS.md) - Direct URLs for all ISOs
 - [Multi-Distro Strategy](MULTI_DISTRO_STRATEGY.md) - Validation approach
-- [ionChannel Project](../ionChannel/) - Main project using these reagents
+- [benchScale](../benchScale/) - Lab orchestration that consumes agentReagents images and configs
 

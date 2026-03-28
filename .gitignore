@@ -24,6 +24,7 @@ images/templates/*
 # Binary packages (download from upstream)
 debs/**/*.deb
 bins/**/*
+!bins/.gitkeep
 
 # Tarballs
 tars/**/*.tar.gz

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build Pop!_OS 22.04 + COSMIC/Wayland + RustDesk Template Image
-# This is the actual target environment for ionChannel validation
+# Legacy template — see specs/AGENTREAGENTS_EVOLUTION.md for golden path
 
 set -e
 
@@ -216,8 +216,8 @@ echo "   • RustDesk 1.2.3 pre-installed"
 echo "   • GDM display manager"
 echo "   • Default user: iontest / password: iontest123"
 echo ""
-echo "🚀 Ready to use with:"
-echo "   cd ionChannel"
-echo "   cargo run --bin ab-validation --features benchscale"
+echo "Ready to use with:"
+echo "   cd ../benchScale"
+echo "   ./scripts/create-lab.sh --topology ecoprimals-tower-2node --name test"
 echo ""
 

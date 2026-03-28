@@ -1,5 +1,8 @@
 # 🎯 Pop!_OS 24.04 + COSMIC Installation Guide
 
+> **Legacy Document** — This guide references the syntheticChemistry/ionChannel era.
+> For current ecoPrimals validation, see `specs/AGENTREAGENTS_EVOLUTION.md`.
+
 ## ✅ VM Created Successfully!
 
 **VM Name:** `popos24-cosmic-template-builder`  

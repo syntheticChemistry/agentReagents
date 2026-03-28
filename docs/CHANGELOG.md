@@ -20,8 +20,8 @@
 - Established best practices for storage and retrieval
 
 ### Purpose
-- Centralized resource repository for syntheticChemistry projects
-- Shared artifacts across ionChannel, benchScale, and future projects
+- Centralized resource repository for the ecoPrimals ecosystem
+- Shared artifacts across benchScale, primalSpring, gate deployments, and related projects
 - Autonomous AI operations with human accessibility
 
 ---

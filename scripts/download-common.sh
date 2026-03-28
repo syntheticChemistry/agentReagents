@@ -1,9 +1,12 @@
 #!/bin/bash
 # Quick Download Script for Common Resources
 
-set -e
+set -euo pipefail
 
-AGENT_REAGENTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REAGENTS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "$SCRIPT_DIR/../configs/defaults.env" 2>/dev/null || source "${REAGENTS_ROOT:-$(dirname "$SCRIPT_DIR")}/configs/defaults.env" 2>/dev/null || true
+AGENT_REAGENTS_DIR="${REAGENTS_ROOT}"
 
 echo "╔═══════════════════════════════════════════════════════════════════════╗"
 echo "║                                                                       ║"

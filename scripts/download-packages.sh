@@ -1,10 +1,11 @@
 #!/bin/bash
 # Download software packages
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REAGENTS_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+source "$SCRIPT_DIR/../configs/defaults.env" 2>/dev/null || source "${REAGENTS_ROOT:-$(dirname "$SCRIPT_DIR")}/configs/defaults.env" 2>/dev/null || true
 DEBS_DIR="${REAGENTS_ROOT}/debs/remote-desktop"
 
 mkdir -p "${DEBS_DIR}"
