@@ -1,39 +1,46 @@
-// Cloud-init monitoring and status checking
+// SPDX-License-Identifier: AGPL-3.0-only
+//! Cloud-init monitoring and JSON status parsing.
 
 use serde::{Deserialize, Serialize};
 
 /// Cloud-init execution status
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CloudInitStatus {
     /// Cloud-init is currently running
-    Running { stage: CloudInitStage },
+    Running {
+        /// Parsed stage from `cloud-init status` detail.
+        stage: CloudInitStage,
+    },
 
     /// Cloud-init completed successfully
     Done,
 
     /// Cloud-init encountered an error
-    Error { message: String },
+    Error {
+        /// Error summary from status output or stderr.
+        message: String,
+    },
 }
 
 impl CloudInitStatus {
     /// Check if cloud-init is complete
-    pub fn is_done(&self) -> bool {
-        matches!(self, CloudInitStatus::Done)
+    pub const fn is_done(&self) -> bool {
+        matches!(self, Self::Done)
     }
 
     /// Check if cloud-init has an error
-    pub fn is_error(&self) -> bool {
-        matches!(self, CloudInitStatus::Error { .. })
+    pub const fn is_error(&self) -> bool {
+        matches!(self, Self::Error { .. })
     }
 
     /// Check if cloud-init is still running
-    pub fn is_running(&self) -> bool {
-        matches!(self, CloudInitStatus::Running { .. })
+    pub const fn is_running(&self) -> bool {
+        matches!(self, Self::Running { .. })
     }
 }
 
 /// Cloud-init execution stages
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CloudInitStage {
     /// Local stage (early boot)
     Init,
@@ -67,16 +74,16 @@ pub struct CloudInitStatusJson {
 impl From<CloudInitStatusJson> for CloudInitStatus {
     fn from(json: CloudInitStatusJson) -> Self {
         match json.status.as_str() {
-            "done" => CloudInitStatus::Done,
+            "done" => Self::Done,
             "running" => {
                 // Try to determine stage from detail
                 let stage = json
                     .detail
                     .as_ref()
                     .and_then(|d| parse_stage_from_detail(d))
-                    .unwrap_or(CloudInitStage::Unknown("running".to_string()));
+                    .unwrap_or_else(|| CloudInitStage::Unknown("running".to_string()));
 
-                CloudInitStatus::Running { stage }
+                Self::Running { stage }
             }
             "error" => {
                 let message = if json.errors.is_empty() {
@@ -84,12 +91,12 @@ impl From<CloudInitStatusJson> for CloudInitStatus {
                 } else {
                     json.errors.join("; ")
                 };
-                CloudInitStatus::Error { message }
+                Self::Error { message }
             }
-            "disabled" => CloudInitStatus::Error {
+            "disabled" => Self::Error {
                 message: "Cloud-init is disabled".to_string(),
             },
-            other => CloudInitStatus::Error {
+            other => Self::Error {
                 message: format!("Unknown cloud-init status: {}", other),
             },
         }

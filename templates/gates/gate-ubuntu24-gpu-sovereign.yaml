@@ -1,0 +1,173 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Gate Template: GPU Sovereign Compute
+#
+# GPU-capable gate with VFIO passthrough, coral-glowplug,
+# and agentReagents isolation for driver reagents.
+# This is the hotSpring use case: cracking legacy/modern GPUs
+# in isolated VMs with swappable driver kernels.
+#
+# Reference: infra/wateringHole/GATE_DEPLOYMENT_STANDARD.md
+
+name: gate-ubuntu24-gpu-sovereign
+version: "1.0.0"
+base_image: ubuntu-24.04-server-cloudimg-amd64.img
+description: >
+  GPU-capable sovereign compute gate. Provides VFIO passthrough,
+  glowplug keepalive, driver reagent isolation. Designed for
+  Tesla K80, Titan V, and similar cards.
+
+resources:
+  memory_mb: 16384
+  vcpus: 8
+  disk_gb: 80
+  timeout_secs: 3600
+
+pci_passthrough: []
+
+users:
+  - name: biomegate
+    groups: [sudo, docker, kvm, libvirt]
+    ssh_authorized_keys: []
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 600
+
+  - type: install_packages
+    packages:
+      - openssh-server
+      - curl
+      - ca-certificates
+      - iproute2
+      - pciutils
+      - usbutils
+      - dmidecode
+      - kmod
+
+  - type: enable_service
+    service: ssh
+
+  - type: run_command
+    command: "mkdir -p /etc/modprobe.d /etc/dracut.conf.d"
+    description: "Create module configuration directories"
+
+  - type: create_file
+    path: /etc/modprobe.d/vfio.conf
+    content: |
+      # VFIO module configuration for GPU passthrough
+      options vfio-pci ids=
+      softdep nouveau pre: vfio-pci
+      softdep nvidia pre: vfio-pci
+    mode: "0644"
+
+  - type: create_file
+    path: /etc/modules-load.d/vfio.conf
+    content: |
+      vfio
+      vfio_iommu_type1
+      vfio_pci
+    mode: "0644"
+
+post_boot_steps:
+  - type: run_command
+    command: "mkdir -p /opt/biomeos/bin /opt/coralreef/glowplug /opt/reagents/drivers /var/log/biomeos"
+    description: "Create directory structure"
+
+  - type: run_command
+    command: |
+      if [ -d /mnt/plasmidbin/primals/x86_64 ]; then
+        cp /mnt/plasmidbin/primals/x86_64/songbird /opt/biomeos/bin/ 2>/dev/null || true
+        cp /mnt/plasmidbin/primals/x86_64/beardog /opt/biomeos/bin/ 2>/dev/null || true
+        chmod +x /opt/biomeos/bin/*
+      fi
+    description: "Deploy core primals from plasmidBin"
+
+  - type: create_file
+    path: /opt/coralreef/glowplug/config.toml
+    content: |
+      # Glowplug GPU keepalive configuration
+      # Populated at deployment time with actual PCI BDFs
+      [gpu]
+      strategy = "vfio"
+      keepalive_interval_secs = 30
+
+      [ember]
+      ring_path = "/opt/coralreef/glowplug/ember.ring"
+      resurrection_enabled = true
+    mode: "0644"
+
+  - type: create_file
+    path: /etc/systemd/system/glowplug.service
+    content: |
+      [Unit]
+      Description=Glowplug GPU Keepalive
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/opt/coralreef/glowplug/glowplug --config /opt/coralreef/glowplug/config.toml
+      Restart=on-failure
+      RestartSec=10
+      Environment=RUST_LOG=info
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: create_file
+    path: /opt/reagents/README.md
+    content: |
+      # Driver Reagents
+      This directory holds isolated GPU driver packages.
+      Drivers are "hazardous reagents" — they are loaded only
+      through glowplug's driver kernel, never in the host kernel.
+
+      Structure:
+        drivers/nvidia/<version>/
+        drivers/nouveau/<version>/
+        drivers/amdgpu/<version>/
+    mode: "0644"
+
+  - type: install_packages
+    packages:
+      - qemu-kvm
+      - libvirt-daemon-system
+      - libvirt-clients
+      - ovmf
+    retry: true
+    timeout_secs: 1800
+    description: "Install virtualization stack for nested driver VMs"
+
+  - type: enable_service
+    service: libvirtd
+    start: true
+
+verification:
+  required_packages:
+    - openssh-server
+    - pciutils
+    - kmod
+    - qemu-kvm
+    - libvirt-daemon-system
+  required_services:
+    - ssh
+    - libvirtd
+  required_files:
+    - /etc/modprobe.d/vfio.conf
+    - /etc/modules-load.d/vfio.conf
+    - /opt/coralreef/glowplug/config.toml
+    - /opt/reagents/README.md
+  verification_commands:
+    - command: "lsmod | grep -q vfio || modprobe vfio-pci 2>/dev/null; echo ok"
+      description: "VFIO module loadable"
+      expected_exit_code: 0
+    - command: "virsh version --daemon 2>/dev/null || echo 'libvirtd not running yet'"
+      description: "Libvirt daemon accessible"
+      expected_exit_code: 0
+
+metadata:
+  gate_standard: "GATE_DEPLOYMENT_STANDARD.md"
+  target_gates: "biomegate-gpu"
+  arch: "x86_64"
+  gpu_cards: "tesla-k80,titan-v,rtx-5070"

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! Post-Boot Step Executor
 //!
 //! Executes steps via SSH after cloud-init completes.
@@ -9,7 +10,7 @@ use crate::templates::PostBootStep;
 use anyhow::{Context, Result};
 use std::time::Duration;
 use tokio::time::timeout;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Execute all post-boot steps on a VM
 #[tracing::instrument(skip(vm, steps))]
@@ -117,10 +118,10 @@ async fn execute_post_boot_step(vm: &VmHandle, step: &PostBootStep, username: &s
         PostBootStep::CopyFile {
             source,
             destination,
-            mode,
+            mode: _,
         } => {
             info!("  📤 Copying file: {} -> {}", source, destination);
-            // TODO: Implement SCP/rsync for file copying
+            // Limitation: no host→guest SCP/rsync path in the builder yet; step is skipped.
             warn!("     ⚠️  CopyFile not yet implemented, skipping");
         }
 
@@ -176,6 +177,7 @@ async fn execute_with_timeout(
 }
 
 /// Execute apt install with progress monitoring
+#[allow(clippy::too_many_lines)] // Remote script generation, SSH streaming, and marker cleanup
 async fn execute_apt_install_monitored(
     vm: &VmHandle,
     packages: &[String],
@@ -351,7 +353,7 @@ async fn execute_with_retry(
 
     for attempt in 1..=max_retries {
         match execute_with_timeout(vm, command, timeout_secs, username).await {
-            Ok(_) => return Ok(()),
+            Ok(()) => return Ok(()),
             Err(e) => {
                 warn!("     ⚠️  Attempt {}/{} failed: {}", attempt, max_retries, e);
                 last_error = Some(e);

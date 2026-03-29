@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! End-to-end build test
 //!
 //! Tests the full build flow from manifest to template

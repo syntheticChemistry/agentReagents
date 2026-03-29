@@ -5,7 +5,7 @@ description: |
   Expected behavior: RustDesk works correctly on GNOME/Wayland
   This is the baseline to show Ubuntu works without ionChannel
   
-base_image: /home/flockgate/Developemt/syntheticChemistry/agentReagents/images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+base_image: images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
 
 resources:
   memory_mb: 8192  # Increased from 4096 for GNOME desktop build

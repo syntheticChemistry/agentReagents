@@ -1,0 +1,163 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Gate Template: biomeOS deployment substrate
+#
+# Minimal Ubuntu 24.04 gate with biomeOS stack pre-deployed:
+# Songbird + BearDog + NestGate from plasmidBin, firewall rules,
+# systemd units, health verification.
+#
+# Reference: infra/wateringHole/GATE_DEPLOYMENT_STANDARD.md
+
+name: gate-ubuntu24-biomeos
+version: "1.0.0"
+base_image: ubuntu-24.04-server-cloudimg-amd64.img
+description: >
+  Standard biomeOS gate substrate. Deploys Songbird (registry),
+  BearDog (crypto), and NestGate (auth) as systemd services.
+  Suitable for Eastgate and biomeGate deployments.
+
+resources:
+  memory_mb: 4096
+  vcpus: 4
+  disk_gb: 40
+  timeout_secs: 3600
+
+users:
+  - name: biomegate
+    groups: [sudo, docker]
+    ssh_authorized_keys: []
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 600
+
+  - type: install_packages
+    packages:
+      - openssh-server
+      - curl
+      - ca-certificates
+      - iproute2
+      - iptables
+      - jq
+
+  - type: enable_service
+    service: ssh
+
+  - type: run_command
+    command: "ufw allow 22/tcp && ufw allow 9100:9200/tcp && ufw --force enable"
+    description: "Configure firewall for SSH and primal ports"
+
+  - type: create_file
+    path: /etc/biomeos/gate.conf
+    content: |
+      GATE_TYPE=biomeos
+      GATE_ROLE=standard
+      PRIMAL_PORT_RANGE=9100-9200
+    mode: "0644"
+
+post_boot_steps:
+  - type: run_command
+    command: "mkdir -p /opt/biomeos/bin /etc/biomeos /var/log/biomeos"
+    description: "Create biomeOS directory structure"
+
+  - type: run_command
+    command: |
+      if [ -d /mnt/plasmidbin/primals/x86_64 ]; then
+        cp /mnt/plasmidbin/primals/x86_64/songbird /opt/biomeos/bin/ 2>/dev/null || true
+        cp /mnt/plasmidbin/primals/x86_64/beardog /opt/biomeos/bin/ 2>/dev/null || true
+        cp /mnt/plasmidbin/primals/x86_64/nestgate /opt/biomeos/bin/ 2>/dev/null || true
+        chmod +x /opt/biomeos/bin/*
+      fi
+    description: "Deploy primals from plasmidBin (if mounted)"
+
+  - type: create_file
+    path: /etc/systemd/system/songbird.service
+    content: |
+      [Unit]
+      Description=Songbird Service Registry
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/opt/biomeos/bin/songbird server --port 9100 --standalone
+      Restart=on-failure
+      RestartSec=5
+      Environment=RUST_LOG=info
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: create_file
+    path: /etc/systemd/system/beardog.service
+    content: |
+      [Unit]
+      Description=BearDog Cryptographic Services
+      After=network-online.target songbird.service
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/opt/biomeos/bin/beardog server --port 9101 --standalone
+      Restart=on-failure
+      RestartSec=5
+      Environment=RUST_LOG=info
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: create_file
+    path: /etc/systemd/system/nestgate.service
+    content: |
+      [Unit]
+      Description=NestGate Authentication
+      After=network-online.target songbird.service beardog.service
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/opt/biomeos/bin/nestgate server --port 9102 --standalone
+      Restart=on-failure
+      RestartSec=5
+      Environment=RUST_LOG=info
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: enable_service
+    service: songbird
+    start: true
+
+  - type: enable_service
+    service: beardog
+    start: true
+
+  - type: enable_service
+    service: nestgate
+    start: true
+
+verification:
+  required_packages:
+    - openssh-server
+    - iproute2
+    - iptables
+    - jq
+  required_services:
+    - ssh
+  required_files:
+    - /etc/biomeos/gate.conf
+    - /opt/biomeos/bin
+  verification_commands:
+    - command: "test -d /opt/biomeos/bin"
+      description: "biomeOS binary directory exists"
+      expected_exit_code: 0
+    - command: "ufw status | grep -q active"
+      description: "Firewall is active"
+      expected_exit_code: 0
+
+metadata:
+  gate_standard: "GATE_DEPLOYMENT_STANDARD.md"
+  target_gates: "eastgate,biomegate"
+  arch: "x86_64"

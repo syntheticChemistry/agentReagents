@@ -18,7 +18,7 @@ description: |
   - This control should demonstrate the problem
   - ionChannel deployment should solve it
 
-base_image: /home/flockgate/Developemt/syntheticChemistry/agentReagents/images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+base_image: images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
 
 resources:
   memory_mb: 8192
@@ -31,7 +31,7 @@ users:
   - name: poptest
     sudo: ALL NOPASSWD:ALL
     ssh_authorized_keys:
-      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCsObPSRD1fLubJn9KDz28KabCfu2JRse9r0hLhH30p9gV+EhqyItGEjf8EoZn8wWW1uUZ7P1Sk/nlXr2MzomdWuvqj1+nRS9gNKwGPWMAZJCZ847Bfxd5jX1wLrZcLuFd/gMSBHFDRZ/JKqBvKkifaA+Vo7oN6BfCI8Xh+rfedT8DJpdoRy/W914vb07lLiXV1RvMtoRa7ETwMI6sRY70+ZVxcdyRou4E2N0R6+LHEIZAAepjXO/Fr0D7LMFKTJAIctw8JdEHT/kr4jS1W2ug2md6QJWuwSAYc5xUgSalCrpSv5tbpyvMGGi8PIxMtM4K2v1BZ9tf5+/ALtzdO4/JA0qOI/FhpvvM5EL60WWRIObMUhU8PrZ4nbfu+UXkUUvQ+42OtpNv0mlinsoHL7Ln10sfEuphn1MQe5caBjCvPIjp2YZCvIe7YDlpKs18pcpSuqY3+7CNm07rMgLgPVxL8JL73R4aIJndqZ/MQgxlS58dmrUis2uyQcfMnySY4bmywfn08zR7eqUG675hBhnx9dya4Zdc2QDAbzwlIIQJ0sPu57zzszkQtI2CdB9zQevwe3WKgaqveC6EKLF9GPIfaDI13ABMNDCMs4WuCkLovtB3kmghtu8t9XcJ91u9+gYl1qtCS6EsvSwhtmYKzpic9lKgrqR41nfX/5sXChyhOlw== biomeOS-ionChannel-validation
+      - ssh-rsa CHANGEME_INSERT_YOUR_PUBLIC_KEY builder@gate
 
 build_steps:
   # Cloud-init: Minimal autoclave phase

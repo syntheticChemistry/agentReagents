@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! Image management and discovery
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 /// Image types available
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImageType {
     /// Cloud-optimized base images
     Cloud,
@@ -21,9 +22,13 @@ pub enum ImageType {
 /// Discovered image
 #[derive(Debug, Clone)]
 pub struct Image {
+    /// File stem or display name.
     pub name: String,
+    /// Absolute or workspace-relative path to the image file.
     pub path: PathBuf,
+    /// How this file is classified (cloud, ISO, template, etc.).
     pub image_type: ImageType,
+    /// File size in bytes.
     pub size_bytes: u64,
 }
 
@@ -76,13 +81,13 @@ impl ImageManager {
         let mut images = Vec::new();
         let mut entries = tokio::fs::read_dir(&dir)
             .await
-            .context(format!("Failed to read directory: {:?}", dir))?;
+            .context(format!("Failed to read directory: {}", dir.display()))?;
 
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
 
-            if path.is_file() {
-                if let Some(extension) = path.extension() {
+            if path.is_file()
+                && let Some(extension) = path.extension() {
                     let ext = extension.to_string_lossy();
                     if ext == "img" || ext == "qcow2" || ext == "iso" {
                         let metadata = tokio::fs::metadata(&path).await?;
@@ -100,7 +105,6 @@ impl ImageManager {
                         });
                     }
                 }
-            }
         }
 
         Ok(images)

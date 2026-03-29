@@ -1,0 +1,136 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Gate Template: aarch64 pixelGate
+#
+# ARM substrate template for Pixel/mobile gate targets.
+# Addresses the primalSpring aarch64 gap by providing a
+# headless aarch64 deployment target for ecosystem validation.
+#
+# Reference: infra/wateringHole/GATE_DEPLOYMENT_STANDARD.md
+
+name: gate-aarch64-pixelgate
+version: "1.0.0"
+base_image: ubuntu-24.04-server-cloudimg-arm64.img
+description: >
+  ARM64 gate substrate for Pixel and mobile deployments.
+  Minimal footprint, biomeOS core primals, aarch64 binaries
+  from plasmidBin. Designed for pixelGate targets.
+
+resources:
+  memory_mb: 2048
+  vcpus: 2
+  disk_gb: 20
+  timeout_secs: 3600
+
+users:
+  - name: biomegate
+    groups: [sudo]
+    ssh_authorized_keys: []
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 600
+
+  - type: install_packages
+    packages:
+      - openssh-server
+      - curl
+      - ca-certificates
+      - iproute2
+      - jq
+
+  - type: enable_service
+    service: ssh
+
+  - type: create_file
+    path: /etc/biomeos/gate.conf
+    content: |
+      GATE_TYPE=pixelgate
+      GATE_ROLE=mobile
+      GATE_ARCH=aarch64
+      PRIMAL_PORT_RANGE=9100-9200
+    mode: "0644"
+
+post_boot_steps:
+  - type: run_command
+    command: "mkdir -p /opt/biomeos/bin /etc/biomeos /var/log/biomeos"
+    description: "Create biomeOS directory structure"
+
+  - type: run_command
+    command: |
+      if [ -d /mnt/plasmidbin/primals/aarch64 ]; then
+        cp /mnt/plasmidbin/primals/aarch64/songbird /opt/biomeos/bin/ 2>/dev/null || true
+        cp /mnt/plasmidbin/primals/aarch64/beardog /opt/biomeos/bin/ 2>/dev/null || true
+        cp /mnt/plasmidbin/primals/aarch64/nestgate /opt/biomeos/bin/ 2>/dev/null || true
+        chmod +x /opt/biomeos/bin/*
+      fi
+    description: "Deploy aarch64 primals from plasmidBin"
+
+  - type: create_file
+    path: /etc/systemd/system/songbird.service
+    content: |
+      [Unit]
+      Description=Songbird Service Registry
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      ExecStart=/opt/biomeos/bin/songbird server --port 9100 --standalone
+      Restart=on-failure
+      RestartSec=5
+      Environment=RUST_LOG=info
+      MemoryMax=256M
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: create_file
+    path: /etc/systemd/system/beardog.service
+    content: |
+      [Unit]
+      Description=BearDog Cryptographic Services
+      After=network-online.target songbird.service
+
+      [Service]
+      Type=simple
+      ExecStart=/opt/biomeos/bin/beardog server --port 9101 --standalone
+      Restart=on-failure
+      RestartSec=5
+      Environment=RUST_LOG=info
+      MemoryMax=128M
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: enable_service
+    service: songbird
+    start: true
+
+  - type: enable_service
+    service: beardog
+    start: true
+
+verification:
+  required_packages:
+    - openssh-server
+    - iproute2
+    - jq
+  required_services:
+    - ssh
+  required_files:
+    - /etc/biomeos/gate.conf
+    - /opt/biomeos/bin
+  verification_commands:
+    - command: "uname -m | grep -q aarch64"
+      description: "Running on aarch64 architecture"
+      expected_exit_code: 0
+    - command: "test -d /opt/biomeos/bin"
+      description: "biomeOS binary directory exists"
+      expected_exit_code: 0
+
+metadata:
+  gate_standard: "GATE_DEPLOYMENT_STANDARD.md"
+  target_gates: "pixelgate"
+  arch: "aarch64"

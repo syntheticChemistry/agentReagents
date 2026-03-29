@@ -23,6 +23,8 @@ images/templates/*
 
 # Binary packages (download from upstream)
 debs/**/*.deb
+packages/**/*.deb
+packages/apt-cache/
 bins/**/*
 !bins/.gitkeep
 

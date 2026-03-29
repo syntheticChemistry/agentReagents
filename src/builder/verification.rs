@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! VM verification system for agentReagents
 //!
 //! This module provides comprehensive verification of VM builds,
@@ -11,6 +12,7 @@ use crate::builder::vm_handle::VmHandle;
 use crate::templates::TemplateManifest as Manifest;
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use std::fmt::Write;
 use tracing::{debug, info, warn};
 
 /// Result of a verification check
@@ -202,7 +204,7 @@ async fn check_dpkg_query(
             details: PackageDetails {
                 actual_name: parts.get(2).map(|s| s.trim().to_string()),
                 version: parts.get(1).map(|s| s.trim().to_string()),
-                dpkg_status: Some(parts.get(0).map(|s| s.trim()).unwrap_or("").to_string()),
+                dpkg_status: Some(parts.first().map_or("", |s| s.trim()).to_string()),
                 ..Default::default()
             },
         });
@@ -216,8 +218,8 @@ async fn check_dpkg_query(
             shell_escape(&arch_package)
         );
         
-        if let Ok(output) = vm.ssh_exec(username, &cmd).await {
-            if output.contains("install ok installed") {
+        if let Ok(output) = vm.ssh_exec(username, &cmd).await
+            && output.contains("install ok installed") {
                 let parts: Vec<&str> = output.split('|').collect();
                 return Ok(PackageVerificationResult {
                     package: package.to_string(),
@@ -226,12 +228,11 @@ async fn check_dpkg_query(
                     details: PackageDetails {
                         actual_name: Some(arch_package),
                         version: parts.get(1).map(|s| s.trim().to_string()),
-                        dpkg_status: Some(parts.get(0).map(|s| s.trim()).unwrap_or("").to_string()),
+                        dpkg_status: Some(parts.first().map_or("", |s| s.trim()).to_string()),
                         ..Default::default()
                     },
                 });
             }
-        }
     }
     
     Err(anyhow!("Package not in 'install ok installed' state"))
@@ -313,7 +314,7 @@ async fn check_apt_cache(
     // Look for "Installed: <version>" line
     for line in output.lines() {
         if line.trim().starts_with("Installed:") {
-            let version = line.split(':').nth(1).map(|s| s.trim());
+            let version = line.split(':').nth(1).map(str::trim);
             if version != Some("(none)") && version.is_some() {
                 return Ok(PackageVerificationResult {
                     package: package.to_string(),
@@ -321,7 +322,7 @@ async fn check_apt_cache(
                     method: VerificationMethod::AptCache,
                     details: PackageDetails {
                         actual_name: Some(package.to_string()),
-                        version: version.map(|s| s.to_string()),
+                        version: version.map(std::string::ToString::to_string),
                         raw_output: Some(output),
                         ..Default::default()
                     },
@@ -414,10 +415,10 @@ async fn gather_diagnostics(
             let cmd = format!("dpkg-query -W {} 2>&1", shell_escape(variant));
             if let Ok(output) = vm.ssh_exec(username, &cmd).await {
                 let first_line = output.lines().next().unwrap_or("");
-                raw_output.push_str(&format!("Variant {}: {}\n", variant, first_line));
+                let _ = writeln!(raw_output, "Variant {}: {}", variant, first_line);
                 
                 if first_line.contains(&format!("{}\t", variant)) || output.contains("install ok installed") {
-                    raw_output.push_str(&format!("✓ Found as variant: {}\n", variant));
+                    let _ = writeln!(raw_output, "✓ Found as variant: {}", variant);
                 }
             }
         }
@@ -425,19 +426,22 @@ async fn gather_diagnostics(
     
     // Try a wildcard search to see what's actually installed
     let wildcard_cmd = format!("dpkg-query -W '{}*' 2>&1 | head -5", shell_escape(package));
-    if let Ok(wildcard_output) = vm.ssh_exec(username, &wildcard_cmd).await {
-        if !wildcard_output.is_empty() && !wildcard_output.contains("no packages found") {
-            raw_output.push_str(&format!("\nInstalled packages matching {}*:\n{}\n", package, wildcard_output));
+    if let Ok(wildcard_output) = vm.ssh_exec(username, &wildcard_cmd).await
+        && !wildcard_output.is_empty() && !wildcard_output.contains("no packages found") {
+            let _ = write!(
+                raw_output,
+                "\nInstalled packages matching {}*:\n{}\n",
+                package,
+                wildcard_output
+            );
         }
-    }
     
     // Get general package search results
     let search_cmd = format!("apt-cache search {} | head -5 2>&1", shell_escape(package));
-    if let Ok(search_output) = vm.ssh_exec(username, &search_cmd).await {
-        if !search_output.is_empty() {
-            raw_output.push_str(&format!("\nSimilar packages:\n{}\n", search_output));
+    if let Ok(search_output) = vm.ssh_exec(username, &search_cmd).await
+        && !search_output.is_empty() {
+            let _ = write!(raw_output, "\nSimilar packages:\n{}\n", search_output);
         }
-    }
     
     Ok(PackageDetails {
         actual_name: None,
@@ -458,8 +462,7 @@ pub async fn verify_installation(vm: &VmHandle, manifest: &Manifest) -> Result<V
     let username = manifest
         .users
         .first()
-        .map(|u| u.name.as_str())
-        .unwrap_or("ubuntu");
+        .map_or("ubuntu", |u| u.name.as_str());
     
     info!("Using SSH user: {}", username);
 
@@ -538,20 +541,20 @@ async fn verify_packages(vm: &VmHandle, manifest: &Manifest, username: &str) -> 
                     let mut msg = String::from("Not installed. ");
                     
                     if !result.details.alternatives_checked.is_empty() {
-                        msg.push_str(&format!(
+                        let _ = write!(
+                            msg,
                             "Variants checked: {}. ",
                             result.details.alternatives_checked.join(", ")
-                        ));
+                        );
                     }
                     
-                    if let Some(ref raw) = result.details.raw_output {
-                        if !raw.is_empty() {
+                    if let Some(ref raw) = result.details.raw_output
+                        && !raw.is_empty() {
                             // Include first line of diagnostics
                             if let Some(first_line) = raw.lines().next() {
-                                msg.push_str(&format!("Info: {}", first_line.trim()));
+                                let _ = write!(msg, "Info: {}", first_line.trim());
                             }
                         }
-                    }
                     
                     Some(msg)
                 };
@@ -605,7 +608,7 @@ async fn verify_commands(vm: &VmHandle, manifest: &Manifest, username: &str) -> 
         };
 
         checks.push(VerificationCheck {
-            name: name.to_string(),
+            name: name.clone(),
             passed,
             details,
         });

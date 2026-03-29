@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! agentReagents - VM Image and Package Management
 //!
 //! Provides reusable VM images and software packages for the biomeOS ecosystem.
@@ -42,9 +43,33 @@
 //! }
 //! ```
 
+#![forbid(unsafe_code)]
+#![deny(clippy::unwrap_used)]
+#![warn(missing_docs)]
+#![warn(clippy::all)]
+#![warn(clippy::pedantic)]
+#![warn(clippy::nursery)]
+#![allow(clippy::module_name_repetitions)]
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_panics_doc)]
+#![allow(clippy::uninlined_format_args)]
+#![allow(clippy::must_use_candidate)]
+#![allow(clippy::doc_markdown)]
+#![allow(clippy::unused_async)]
+#![allow(clippy::return_self_not_must_use)]
+#![allow(clippy::missing_const_for_fn)]
+#![allow(clippy::struct_excessive_bools)]
+#![allow(clippy::option_if_let_else)]
+
+/// Manifest-driven VM image builder, verification, and post-boot steps.
 pub mod builder;
+/// Image listing and discovery under the reagents directory.
 pub mod images;
+/// Package file discovery (.deb, etc.) under the reagents tree.
 pub mod packages;
+/// JSON-RPC 2.0 server (UniBin `server --port` mode).
+pub mod server;
+/// Template manifests, registry, and YAML definitions.
 pub mod templates;
 
 // Discovery: Use standard solutions (mDNS, DNS-SD, Consul)

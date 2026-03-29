@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! Template registry for managing templates
 //!
 //! Provides storage and retrieval of template manifests with checksums.
@@ -14,15 +15,19 @@ use tracing::{debug, info};
 /// Registry error types
 #[derive(Debug, Error)]
 pub enum RegistryError {
+    /// No template registered under that name.
     #[error("Template not found: {0}")]
     NotFound(String),
 
+    /// Register would overwrite an existing template name.
     #[error("Template already exists: {0}")]
     AlreadyExists(String),
 
+    /// Manifest or path failed validation.
     #[error("Invalid template: {0}")]
     Invalid(String),
 
+    /// Underlying filesystem error.
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -41,8 +46,9 @@ struct RegistryIndex {
 }
 
 impl TemplateRegistry {
-    /// Create or open a template registry
-    pub fn new(base_dir: PathBuf) -> Result<Self> {
+    /// Create or open a template registry under `base_dir/registry` and `base_dir/templates`.
+    pub fn new(base_dir: impl AsRef<Path>) -> Result<Self> {
+        let base_dir = base_dir.as_ref();
         let registry_dir = base_dir.join("registry");
         let templates_dir = base_dir.join("templates");
 
@@ -94,7 +100,7 @@ impl TemplateRegistry {
     pub fn register_template(
         &mut self,
         manifest: &TemplateManifest,
-        template_path: PathBuf,
+        template_path: &Path,
     ) -> Result<()> {
         // Validate manifest
         manifest
@@ -107,14 +113,14 @@ impl TemplateRegistry {
         }
 
         // Calculate checksum
-        let checksum = Self::calculate_checksum(&template_path)?;
+        let checksum = Self::calculate_checksum(template_path)?;
 
         // Get file size
-        let size_bytes = std::fs::metadata(&template_path)?.len();
+        let size_bytes = std::fs::metadata(template_path)?.len();
 
         // Copy template to registry
         let dest_path = self.templates_dir.join(format!("{}.qcow2", manifest.name));
-        std::fs::copy(&template_path, &dest_path)?;
+        std::fs::copy(template_path, &dest_path)?;
 
         // Save manifest
         let manifest_path = self.registry_dir.join(format!("{}.yaml", manifest.name));
@@ -231,7 +237,7 @@ mod tests {
     #[test]
     fn test_registry_creation() {
         let temp_dir = TempDir::new().unwrap();
-        let registry = TemplateRegistry::new(temp_dir.path().to_path_buf()).unwrap();
+        let registry = TemplateRegistry::new(temp_dir.path()).unwrap();
 
         assert_eq!(registry.list_templates().len(), 0);
     }

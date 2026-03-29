@@ -1,10 +1,12 @@
-/// Robust VM reboot handling with deep diagnostics
-///
-/// This module provides idiomatic Rust-based VM reboot recovery that goes beyond
-/// simple SSH polling to understand WHY a VM might not be responding after reboot.
+// SPDX-License-Identifier: AGPL-3.0-only
+//! Robust VM reboot handling with deep diagnostics.
+//!
+//! VM reboot recovery that goes beyond simple SSH polling to understand why a VM
+//! might not respond after reboot.
 
 use crate::builder::vm_handle::VmHandle;
-use anyhow::{Context, Result};
+use std::fmt::Write;
+use anyhow::Result;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
@@ -82,6 +84,7 @@ impl Default for RebootConfig {
 /// # Returns
 /// * `Ok(RebootState)` - Final state on successful reboot
 /// * `Err` - Detailed error with diagnostics
+#[allow(clippy::too_many_lines)] // Reboot loop: SSH polling, libvirt state, optional diagnostics
 pub async fn execute_reboot(
     vm: &VmHandle,
     username: &str,
@@ -244,15 +247,27 @@ pub async fn execute_reboot(
     
     if let Some(ref diag) = diagnostics {
         error_msg.push_str("\n\n📊 Boot Diagnostics:");
-        error_msg.push_str(&format!("\n  • Systemd multi-user target: {}", diag.systemd_multi_user));
-        error_msg.push_str(&format!("\n  • Systemd graphical target: {}", diag.systemd_graphical));
-        error_msg.push_str(&format!("\n  • SSH service active: {}", diag.ssh_service_active));
-        error_msg.push_str(&format!("\n  • Network configured: {}", diag.network_configured));
+        let _ = writeln!(
+            error_msg,
+            "\n  • Systemd multi-user target: {}",
+            diag.systemd_multi_user
+        );
+        let _ = writeln!(
+            error_msg,
+            "\n  • Systemd graphical target: {}",
+            diag.systemd_graphical
+        );
+        let _ = writeln!(error_msg, "\n  • SSH service active: {}", diag.ssh_service_active);
+        let _ = writeln!(
+            error_msg,
+            "\n  • Network configured: {}",
+            diag.network_configured
+        );
         
         if !diag.recent_boot_messages.is_empty() {
             error_msg.push_str("\n\n📝 Recent boot messages:");
             for msg in diag.recent_boot_messages.iter().take(10) {
-                error_msg.push_str(&format!("\n  {}", msg));
+                let _ = writeln!(error_msg, "\n  {}", msg);
             }
         }
         
@@ -276,11 +291,10 @@ pub async fn execute_reboot(
         error_msg.push_str("\n  • Network configuration issue preventing SSH access");
     }
     
-    if let Some(state) = last_state {
-        if let Some(ref ssh_err) = state.ssh_error {
-            error_msg.push_str(&format!("\n\n🔍 Last SSH error: {}", ssh_err));
+    if let Some(state) = last_state
+        && let Some(ref ssh_err) = state.ssh_error {
+            let _ = writeln!(error_msg, "\n\n🔍 Last SSH error: {}", ssh_err);
         }
-    }
     
     anyhow::bail!(error_msg)
 }
@@ -323,7 +337,7 @@ async fn gather_boot_diagnostics(vm: &VmHandle, username: &str) -> Result<BootDi
         .await
         .unwrap_or_default()
         .lines()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .collect();
     
     Ok(BootDiagnostics {

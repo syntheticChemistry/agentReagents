@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! Build state tracking for VM image creation
 //!
 //! Provides a state machine for tracking build progress with network awareness.
@@ -32,11 +33,15 @@ pub enum BuildState {
 
     /// Installing system packages
     InstallingPackages {
-        progress: f32, // 0.0 to 1.0
+        /// Approximate progress from 0.0 to 1.0 within this phase.
+        progress: f32,
     },
 
     /// Installing COSMIC desktop
-    InstallingCosmic { progress: f32 },
+    InstallingCosmic {
+        /// Approximate progress from 0.0 to 1.0 within this phase.
+        progress: f32,
+    },
 
     /// Installing RustDesk
     InstallingRustDesk,
@@ -57,100 +62,104 @@ pub enum BuildState {
     Complete,
 
     /// Build failed
-    Failed { reason: String },
+    Failed {
+        /// Human-readable failure reason.
+        reason: String,
+    },
 
     /// Network connectivity lost (NEW)
-    NetworkLost { reason: String },
+    NetworkLost {
+        /// Human-readable explanation (e.g. timeout).
+        reason: String,
+    },
 }
 
 impl BuildState {
     /// Check if this state requires network connectivity (NEW)
     ///
     /// Returns true for states where network access is critical
-    pub fn requires_network(&self) -> bool {
+    pub const fn requires_network(&self) -> bool {
         matches!(
             self,
-            BuildState::NetworkEstablishment
-                | BuildState::NetworkVerified
-                | BuildState::Monitoring
-                | BuildState::CloudInitInit
-                | BuildState::InstallingPackages { .. }
-                | BuildState::InstallingCosmic { .. }
-                | BuildState::InstallingRustDesk
-                | BuildState::CloudInitComplete
-                | BuildState::Verifying
-                | BuildState::VerifyingNetwork
+            Self::NetworkEstablishment
+                | Self::NetworkVerified
+                | Self::Monitoring
+                | Self::CloudInitInit
+                | Self::InstallingPackages { .. }
+                | Self::InstallingCosmic { .. }
+                | Self::InstallingRustDesk
+                | Self::CloudInitComplete
+                | Self::Verifying
+                | Self::VerifyingNetwork
         )
     }
 
     /// Check if the build is in a terminal state
-    pub fn is_terminal(&self) -> bool {
+    pub const fn is_terminal(&self) -> bool {
         matches!(
             self,
-            BuildState::Complete | BuildState::Failed { .. } | BuildState::NetworkLost { .. }
+            Self::Complete | Self::Failed { .. } | Self::NetworkLost { .. }
         )
     }
 
     /// Check if the build failed
-    pub fn is_failed(&self) -> bool {
+    pub const fn is_failed(&self) -> bool {
         matches!(
             self,
-            BuildState::Failed { .. } | BuildState::NetworkLost { .. }
+            Self::Failed { .. } | Self::NetworkLost { .. }
         )
     }
 
     /// Check if the build is complete
-    pub fn is_complete(&self) -> bool {
-        matches!(self, BuildState::Complete)
+    pub const fn is_complete(&self) -> bool {
+        matches!(self, Self::Complete)
     }
 
     /// Get a human-readable description of the state
     pub fn description(&self) -> String {
         match self {
-            BuildState::Idle => "Idle".to_string(),
-            BuildState::Starting => "Starting build process".to_string(),
-            BuildState::CreatingVm => "Creating builder VM".to_string(),
-            BuildState::NetworkEstablishment => "Establishing network".to_string(),
-            BuildState::NetworkVerified => "Network verified".to_string(),
-            BuildState::Monitoring => "Monitoring build".to_string(),
-            BuildState::CloudInitInit => "Initializing cloud-init".to_string(),
-            BuildState::InstallingPackages { progress } => {
+            Self::Idle => "Idle".to_string(),
+            Self::Starting => "Starting build process".to_string(),
+            Self::CreatingVm => "Creating builder VM".to_string(),
+            Self::NetworkEstablishment => "Establishing network".to_string(),
+            Self::NetworkVerified => "Network verified".to_string(),
+            Self::Monitoring => "Monitoring build".to_string(),
+            Self::CloudInitInit => "Initializing cloud-init".to_string(),
+            Self::InstallingPackages { progress } => {
                 format!("Installing packages ({:.0}%)", progress * 100.0)
             }
-            BuildState::InstallingCosmic { progress } => {
+            Self::InstallingCosmic { progress } => {
                 format!("Installing COSMIC desktop ({:.0}%)", progress * 100.0)
             }
-            BuildState::InstallingRustDesk => "Installing RustDesk".to_string(),
-            BuildState::CloudInitComplete => "Cloud-init complete".to_string(),
-            BuildState::Verifying => "Verifying installation".to_string(),
-            BuildState::VerifyingNetwork => "Verifying network".to_string(),
-            BuildState::Finalizing => "Finalizing template".to_string(),
-            BuildState::Complete => "Build complete".to_string(),
-            BuildState::Failed { reason } => format!("Build failed: {}", reason),
-            BuildState::NetworkLost { reason } => format!("Network lost: {}", reason),
+            Self::InstallingRustDesk => "Installing RustDesk".to_string(),
+            Self::CloudInitComplete => "Cloud-init complete".to_string(),
+            Self::Verifying => "Verifying installation".to_string(),
+            Self::VerifyingNetwork => "Verifying network".to_string(),
+            Self::Finalizing => "Finalizing template".to_string(),
+            Self::Complete => "Build complete".to_string(),
+            Self::Failed { reason } => format!("Build failed: {}", reason),
+            Self::NetworkLost { reason } => format!("Network lost: {}", reason),
         }
     }
 
     /// Get overall progress (0.0 to 1.0)
     pub fn progress(&self) -> f32 {
         match self {
-            BuildState::Idle => 0.0,
-            BuildState::Starting => 0.05,
-            BuildState::CreatingVm => 0.10,
-            BuildState::NetworkEstablishment => 0.12,
-            BuildState::NetworkVerified => 0.14,
-            BuildState::Monitoring => 0.15,
-            BuildState::CloudInitInit => 0.20,
-            BuildState::InstallingPackages { progress } => 0.20 + (progress * 0.30),
-            BuildState::InstallingCosmic { progress } => 0.50 + (progress * 0.30),
-            BuildState::InstallingRustDesk => 0.80,
-            BuildState::CloudInitComplete => 0.85,
-            BuildState::Verifying => 0.90,
-            BuildState::VerifyingNetwork => 0.92,
-            BuildState::Finalizing => 0.95,
-            BuildState::Complete => 1.0,
-            BuildState::Failed { .. } => 0.0,
-            BuildState::NetworkLost { .. } => 0.0,
+            Self::Starting => 0.05,
+            Self::CreatingVm => 0.10,
+            Self::NetworkEstablishment => 0.12,
+            Self::NetworkVerified => 0.14,
+            Self::Monitoring => 0.15,
+            Self::CloudInitInit => 0.20,
+            Self::InstallingPackages { progress } => 0.20 + (progress * 0.30),
+            Self::InstallingCosmic { progress } => 0.50 + (progress * 0.30),
+            Self::InstallingRustDesk => 0.80,
+            Self::CloudInitComplete => 0.85,
+            Self::Verifying => 0.90,
+            Self::VerifyingNetwork => 0.92,
+            Self::Finalizing => 0.95,
+            Self::Complete => 1.0,
+            Self::Idle | Self::Failed { .. } | Self::NetworkLost { .. } => 0.0,
         }
     }
 }
@@ -158,15 +167,20 @@ impl BuildState {
 /// Progress information for the build
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildProgress {
+    /// Current high-level build state.
     pub state: BuildState,
+    /// Overall progress from 0.0 to 1.0.
     pub progress: f32,
+    /// Short human-readable status line.
     pub description: String,
+    /// Seconds since the build started (wall clock).
     pub elapsed_secs: u64,
     /// Network health status (NEW)
     pub network_healthy: bool,
 }
 
 impl BuildProgress {
+    /// Builds a snapshot from the current state and elapsed time.
     pub fn new(state: BuildState, elapsed_secs: u64) -> Self {
         let progress = state.progress();
         let description = state.description();
@@ -181,7 +195,7 @@ impl BuildProgress {
     }
 
     /// Update network health status (NEW)
-    pub fn set_network_healthy(&mut self, healthy: bool) {
+    pub const fn set_network_healthy(&mut self, healthy: bool) {
         self.network_healthy = healthy;
     }
 }

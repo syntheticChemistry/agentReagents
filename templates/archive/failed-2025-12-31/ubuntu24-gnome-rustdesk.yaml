@@ -1,6 +1,6 @@
 name: ubuntu24-gnome-rustdesk
 version: 1.0.0
-base_image: /home/flockgate/Developemt/syntheticChemistry/agentReagents/images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+base_image: images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
 description: |
   Ubuntu 24.04 LTS with GNOME Desktop and RustDesk for ionChannel validation
   Clean, repeatable substrate with external access capability

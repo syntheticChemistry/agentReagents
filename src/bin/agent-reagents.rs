@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! agent-reagents CLI tool
 //!
 //! Reproducible VM image management with manifest-driven builds
@@ -5,9 +6,8 @@
 use agent_reagents::templates::{TemplateManifest, TemplateRegistry};
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::{error, info};
-use tracing_subscriber;
 
 #[derive(Parser)]
 #[command(name = "agent-reagents")]
@@ -72,6 +72,19 @@ enum Commands {
         /// Manifest file (YAML)
         manifest: PathBuf,
     },
+
+    /// Start JSON-RPC 2.0 server (UniBin compliance)
+    Server {
+        /// TCP port to listen on
+        #[arg(long)]
+        port: u16,
+        /// Bind address
+        #[arg(long, default_value = "127.0.0.1")]
+        listen: String,
+        /// Run in standalone mode (no Songbird registration)
+        #[arg(long, default_value_t = true)]
+        standalone: bool,
+    },
 }
 
 #[tokio::main]
@@ -114,13 +127,24 @@ async fn main() -> Result<()> {
         Commands::Validate { manifest } => {
             cmd_validate(&manifest).await?;
         }
+
+        Commands::Server {
+            port,
+            listen,
+            standalone,
+        } => {
+            let addr: std::net::SocketAddr = format!("{listen}:{port}")
+                .parse()
+                .expect("invalid listen address");
+            agent_reagents::server::run_server(addr, cli.registry, standalone).await?;
+        }
     }
 
     Ok(())
 }
 
-async fn cmd_list(registry_dir: &PathBuf, verbose: bool) -> Result<()> {
-    let registry = TemplateRegistry::new(registry_dir.clone())?;
+async fn cmd_list(registry_dir: &Path, verbose: bool) -> Result<()> {
+    let registry = TemplateRegistry::new(registry_dir)?;
     let templates = registry.list_templates();
 
     if templates.is_empty() {
@@ -151,8 +175,8 @@ async fn cmd_list(registry_dir: &PathBuf, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_info(registry_dir: &PathBuf, name: &str) -> Result<()> {
-    let registry = TemplateRegistry::new(registry_dir.clone())?;
+async fn cmd_info(registry_dir: &Path, name: &str) -> Result<()> {
+    let registry = TemplateRegistry::new(registry_dir)?;
 
     let info = registry
         .get_template(name)
@@ -196,8 +220,8 @@ async fn cmd_info(registry_dir: &PathBuf, name: &str) -> Result<()> {
 }
 
 async fn cmd_build(
-    _registry_dir: &PathBuf,
-    manifest_path: &PathBuf,
+    _registry_dir: &Path,
+    manifest_path: &Path,
     ssh_key: Option<String>,
     ssh_key_file: Option<PathBuf>,
 ) -> Result<()> {
@@ -255,9 +279,9 @@ async fn cmd_build(
     }
 
     println!("🖼️  Base image: {}", base_image.display());
-    println!("");
+    println!();
     println!("Starting build process...");
-    println!("");
+    println!();
 
     // Create manifest-driven builder
     // Deep debt solution: All builds are now declarative and manifest-driven
@@ -271,7 +295,7 @@ async fn cmd_build(
         .await
         .context("Build failed")?;
 
-    println!("");
+    println!();
     println!("✅ Build completed successfully!");
     println!("   Template: {}", result.template_path.display());
     println!(
@@ -280,15 +304,15 @@ async fn cmd_build(
         result.size_bytes as f64 / 1024.0 / 1024.0
     );
     println!("   Duration: {:?}", result.build_duration);
-    println!("");
+    println!();
     println!("Verification:");
     println!("{}", result.verification.summary());
 
     Ok(())
 }
 
-async fn cmd_verify(registry_dir: &PathBuf, name: &str) -> Result<()> {
-    let registry = TemplateRegistry::new(registry_dir.clone())?;
+async fn cmd_verify(registry_dir: &Path, name: &str) -> Result<()> {
+    let registry = TemplateRegistry::new(registry_dir)?;
 
     info!("Verifying template: {}", name);
 
@@ -304,8 +328,8 @@ async fn cmd_verify(registry_dir: &PathBuf, name: &str) -> Result<()> {
     Ok(())
 }
 
-async fn cmd_delete(registry_dir: &PathBuf, name: &str, yes: bool) -> Result<()> {
-    let mut registry = TemplateRegistry::new(registry_dir.clone())?;
+async fn cmd_delete(registry_dir: &Path, name: &str, yes: bool) -> Result<()> {
+    let mut registry = TemplateRegistry::new(registry_dir)?;
 
     // Check if template exists
     let _ = registry
@@ -330,7 +354,7 @@ async fn cmd_delete(registry_dir: &PathBuf, name: &str, yes: bool) -> Result<()>
     Ok(())
 }
 
-async fn cmd_validate(manifest_path: &PathBuf) -> Result<()> {
+async fn cmd_validate(manifest_path: &Path) -> Result<()> {
     info!("Validating manifest: {}", manifest_path.display());
 
     let manifest =

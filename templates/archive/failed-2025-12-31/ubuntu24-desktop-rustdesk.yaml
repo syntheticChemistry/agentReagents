@@ -5,7 +5,7 @@ description: |
   All 3 layers built together via cloud-init
   This is the CONTROL SUBSTRATE for ionChannel A/B testing
   
-base_image: /home/flockgate/Developemt/syntheticChemistry/agentReagents/images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+base_image: images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
 
 resources:
   memory_mb: 4096

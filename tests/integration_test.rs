@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! Integration tests for agentReagents
 //!
 //! These tests verify the integration between components
@@ -44,7 +45,7 @@ fn test_template_manifest_validation() {
 fn test_template_registry_creation() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let registry =
-        TemplateRegistry::new(temp_dir.path().to_path_buf()).expect("Failed to create registry");
+        TemplateRegistry::new(temp_dir.path()).expect("Failed to create registry");
 
     let templates = registry.list_templates();
     assert_eq!(templates.len(), 0);
@@ -105,4 +106,40 @@ fn test_manifest_round_trip() {
     assert_eq!(manifest.name, manifest2.name);
     assert_eq!(manifest.version, manifest2.version);
     assert_eq!(manifest.base_image, manifest2.base_image);
+}
+
+#[test]
+fn test_gate_templates_valid() {
+    let gate_templates = [
+        "templates/gates/gate-ubuntu24-biomeos.yaml",
+        "templates/gates/gate-ubuntu24-gpu-sovereign.yaml",
+        "templates/gates/gate-aarch64-pixelgate.yaml",
+    ];
+
+    for template_file in &gate_templates {
+        let path = PathBuf::from(template_file);
+        assert!(path.exists(), "gate template missing: {template_file}");
+
+        let manifest = TemplateManifest::from_yaml_file(&path)
+            .unwrap_or_else(|e| panic!("failed to load {template_file}: {e}"));
+
+        manifest
+            .validate()
+            .unwrap_or_else(|e| panic!("{template_file} validation failed: {e}"));
+
+        assert!(
+            manifest.name.starts_with("gate-"),
+            "{template_file}: gate templates must be named gate-*"
+        );
+
+        assert!(
+            manifest.metadata.contains_key("gate_standard"),
+            "{template_file}: missing gate_standard metadata"
+        );
+
+        assert!(
+            manifest.metadata.contains_key("arch"),
+            "{template_file}: missing arch metadata"
+        );
+    }
 }

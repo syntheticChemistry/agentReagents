@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! Template manifest definitions
 //!
 //! Defines the structure for template manifests that describe
@@ -24,6 +25,11 @@ pub struct TemplateManifest {
 
     /// VM resources
     pub resources: ResourceConfig,
+
+    /// PCI devices to pass through via VFIO (optional)
+    /// Each device must be bound to vfio-pci on the host before VM creation.
+    #[serde(default)]
+    pub pci_passthrough: Vec<PciPassthroughConfig>,
 
     /// Users to create (for cloud-init)
     #[serde(default)]
@@ -75,7 +81,14 @@ pub struct ResourceConfig {
     pub static_ip: Option<String>,
 }
 
-fn default_timeout() -> u64 {
+/// PCI device for VFIO passthrough into the VM
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PciPassthroughConfig {
+    /// PCI bus/device/function (e.g., "0000:4d:00.0")
+    pub bdf: String,
+}
+
+const fn default_timeout() -> u64 {
     2400 // 40 minutes
 }
 
@@ -103,51 +116,72 @@ pub struct UserConfig {
 pub enum BuildStep {
     /// Wait for cloud-init to complete
     WaitCloudInit {
+        /// Max seconds to wait before failing the step.
         #[serde(default = "default_cloud_init_timeout")]
         timeout_secs: u64,
     },
 
     /// Add APT repository
     AddRepository {
+        /// Short name for `sources.list.d` and keyring files.
         name: String,
+        /// `deb` line URL (without `deb [arch=...]` prefix if using signed-by).
         url: String,
+        /// Optional URL to the repository signing key.
         key_url: Option<String>,
     },
 
     /// Install packages
-    InstallPackages { packages: Vec<String> },
+    InstallPackages {
+        /// APT package names to install during cloud-init.
+        packages: Vec<String>,
+    },
 
     /// Run shell command
     RunCommand {
+        /// Shell command to run as root during cloud-init.
         command: String,
+        /// Optional log label for operators.
         description: Option<String>,
     },
 
     /// Enable systemd service
-    EnableService { service: String },
+    EnableService {
+        /// systemd unit name (e.g. `ssh`).
+        service: String,
+    },
 
     /// Create file with content
     CreateFile {
+        /// Absolute path on the guest.
         path: String,
+        /// File contents (written via heredoc in generated cloud-init).
         content: String,
+        /// Optional octal mode string.
         mode: Option<String>,
     },
 
     /// Download file
-    DownloadFile { url: String, dest: String },
+    DownloadFile {
+        /// HTTP(S) URL to fetch.
+        url: String,
+        /// Destination path on the guest.
+        dest: String,
+    },
 
     /// Reboot VM
     Reboot {
+        /// Seconds to wait after requesting reboot before continuing.
         #[serde(default = "default_reboot_wait")]
         wait_secs: u64,
     },
 }
 
-fn default_cloud_init_timeout() -> u64 {
+const fn default_cloud_init_timeout() -> u64 {
     600 // 10 minutes
 }
 
-fn default_reboot_wait() -> u64 {
+const fn default_reboot_wait() -> u64 {
     120 // 2 minutes
 }
 
@@ -166,57 +200,74 @@ fn default_reboot_wait() -> u64 {
 pub enum PostBootStep {
     /// Install packages via APT (with retry and timeout)
     InstallPackages {
+        /// APT package names to install over SSH.
         packages: Vec<String>,
+        /// Whether to retry the apt invocation on transient errors.
         #[serde(default)]
         retry: bool,
+        /// SSH command timeout in seconds.
         #[serde(default = "default_package_timeout")]
         timeout_secs: u64,
+        /// Optional operator-facing description.
         #[serde(default)]
         description: Option<String>,
     },
 
     /// Run a shell command
     RunCommand {
+        /// Shell command to run (typically as the manifest user with sudo).
         command: String,
+        /// Optional log label.
         #[serde(default)]
         description: Option<String>,
+        /// Timeout for the remote command in seconds.
         #[serde(default)]
         timeout_secs: u64,
     },
 
     /// Create a file with content
     CreateFile {
+        /// Absolute path on the guest.
         path: String,
+        /// File contents.
         content: String,
+        /// Octal permission string (e.g. `0644`).
         #[serde(default = "default_file_mode")]
         mode: String,
+        /// Optional `user:group` for ownership.
         #[serde(default)]
         owner: Option<String>,
     },
 
     /// Copy a file from host to VM
     CopyFile {
+        /// Host path relative to the builder working directory or absolute.
         source: String,
+        /// Destination path on the guest.
         destination: String,
+        /// Octal permission string for the copied file.
         #[serde(default = "default_file_mode")]
         mode: String,
     },
 
     /// Enable a systemd service
     EnableService {
+        /// systemd unit name.
         service: String,
+        /// Whether to start the unit immediately after enable.
         #[serde(default)]
         start: bool,
     },
 
     /// Reboot the VM and wait for it to come back
     Reboot {
+        /// Seconds to wait for SSH to return after reboot.
         #[serde(default = "default_reboot_wait")]
         wait_secs: u64,
     },
 }
 
-fn default_package_timeout() -> u64 {
+const fn default_package_timeout() -> u64 {
     1800 // 30 minutes for complex packages
 }
 
@@ -325,6 +376,7 @@ mod tests {
                 timeout_secs: 2400,
                 static_ip: None,
             },
+            pci_passthrough: vec![],
             users: vec![],
             build_steps: vec![],
             post_boot_steps: vec![],

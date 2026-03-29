@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! Build a COSMIC desktop image with verification
 //!
 //! This example demonstrates the modern Rust-based image builder

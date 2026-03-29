@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! VM Handle for managing builder VMs
 //!
 //! Provides a high-level interface for interacting with VMs during the build process.
@@ -17,15 +18,19 @@ pub struct VmHandle {
 /// Cloud-init status from SSH query
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudInitStatusInfo {
+    /// Raw status string from `cloud-init status` or JSON.
     pub status: String,
+    /// Whether cloud-init reports still running.
     pub running: bool,
+    /// Whether cloud-init reports finished successfully.
     pub finished: bool,
+    /// Non-fatal or fatal messages from the status output.
     pub errors: Vec<String>,
 }
 
 impl VmHandle {
     /// Create a new VM handle
-    pub fn new(backend: LibvirtBackend, node: NodeInfo) -> Self {
+    pub const fn new(backend: LibvirtBackend, node: NodeInfo) -> Self {
         Self { backend, node }
     }
 
@@ -45,12 +50,12 @@ impl VmHandle {
     }
 
     /// Get reference to backend
-    pub fn backend(&self) -> &LibvirtBackend {
+    pub const fn backend(&self) -> &LibvirtBackend {
         &self.backend
     }
 
     /// Get reference to node info
-    pub fn node(&self) -> &NodeInfo {
+    pub const fn node(&self) -> &NodeInfo {
         &self.node
     }
 

@@ -1,14 +1,15 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // agentReagents Image Builder
 // Modern idiomatic Rust implementation replacing bash scripts
 
 mod cloud_init_monitor;
-mod executor;
 pub mod network;
 mod post_boot; // NEW: Post-boot step executor
 mod state;
-mod verification;
+pub mod verification;
 pub mod vm_handle;
-pub mod vm_reboot; // EVOLUTION #9: Deep reboot diagnostics
+/// Deep reboot handling, SSH polling, and boot diagnostics.
+pub mod vm_reboot;
 
 pub use cloud_init_monitor::{CloudInitStage, CloudInitStatus};
 pub use network::NetworkMonitor;
@@ -19,7 +20,7 @@ pub use vm_handle::{CloudInitStatusInfo, VmHandle};
 use benchscale::backend::senescence::SenescenceMonitor;
 // Phase 2B: Configuration system
 use benchscale::config::{BenchScaleConfig, MonitoringConfig, TimeoutConfig};
-use crate::templates::{TemplateManifest, PostBootStep};
+use crate::templates::{BuildStep, PostBootStep, TemplateManifest};
 use anyhow::{bail, Context, Result};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -39,14 +40,20 @@ pub struct ImageBuilder {
     timeout: Duration,
     /// Current build state
     state: BuildState,
+    /// Optional plasmidBin path for injecting primal binaries
+    plasmid_bin_path: Option<PathBuf>,
 }
 
 /// Result of a successful build
 #[derive(Debug, Clone)]
 pub struct BuildResult {
+    /// Output template image path (e.g. qcow2).
     pub template_path: PathBuf,
+    /// Size of the template file in bytes.
     pub size_bytes: u64,
+    /// Wall-clock time spent on the build.
     pub build_duration: Duration,
+    /// Outcome of post-build verification checks.
     pub verification: VerificationResult,
 }
 
@@ -61,6 +68,7 @@ impl ImageBuilder {
             manifest,
             timeout,
             state: BuildState::Idle,
+            plasmid_bin_path: None,
         }
     }
 
@@ -68,6 +76,21 @@ impl ImageBuilder {
     pub fn with_timeout(mut self, duration: Duration) -> Self {
         self.timeout = duration;
         self
+    }
+
+    /// Set a `plasmidBin` path so primal binaries are baked into the image.
+    ///
+    /// When set, the builder will copy binaries from `<path>/primals/<arch>/`
+    /// into `/opt/biomeos/bin/` during the build, making gate images ship
+    /// with pre-deployed primals.
+    pub fn with_plasmid_bin(mut self, path: PathBuf) -> Self {
+        self.plasmid_bin_path = Some(path);
+        self
+    }
+
+    /// Returns the plasmidBin path, if configured.
+    pub fn plasmid_bin_path(&self) -> Option<&PathBuf> {
+        self.plasmid_bin_path.as_ref()
     }
 
     /// Get current build state
@@ -95,14 +118,14 @@ impl ImageBuilder {
         let start_time = std::time::Instant::now();
 
         info!("Starting COSMIC desktop build: {}", self.manifest.name);
-        self.transition_to(BuildState::Starting)?;
+        self.transition_to(BuildState::Starting);
 
         // Create cloud-init configuration from manifest
-        let cloud_init = self.create_cloud_init(ssh_public_key)?;
+        let cloud_init = self.create_cloud_init(ssh_public_key);
 
         // Create builder VM
-        self.transition_to(BuildState::CreatingVm)?;
-        let (vm_handle, mut _vm_guard) = self
+        self.transition_to(BuildState::CreatingVm);
+        let (vm_handle, vm_guard) = self
             .create_builder_vm(cloud_init)
             .await
             .context("Failed to create builder VM")?;
@@ -111,29 +134,29 @@ impl ImageBuilder {
         // We'll preserve it explicitly at the end if build succeeds
 
         // Monitor the build process with timeout
-        self.transition_to(BuildState::Monitoring)?;
+        self.transition_to(BuildState::Monitoring);
         let monitor_result = timeout(self.timeout, self.monitor_build_process(&vm_handle)).await;
 
         match monitor_result {
-            Ok(Ok(_)) => {
+            Ok(Ok(())) => {
                 info!("Build monitoring completed successfully");
             }
             Ok(Err(e)) => {
                 self.transition_to(BuildState::Failed {
                     reason: e.to_string(),
-                })?;
+                });
                 return Err(e).context("Build process failed");
             }
             Err(_) => {
                 self.transition_to(BuildState::Failed {
                     reason: "Build timeout".to_string(),
-                })?;
+                });
                 bail!("Build timeout after {:?}", self.timeout);
             }
         }
 
         // Verify installation
-        self.transition_to(BuildState::Verifying)?;
+        self.transition_to(BuildState::Verifying);
         let verification = self
             .verify_installation(&vm_handle)
             .await
@@ -142,12 +165,12 @@ impl ImageBuilder {
         if !verification.passed {
             self.transition_to(BuildState::Failed {
                 reason: "Verification failed".to_string(),
-            })?;
+            });
             bail!("Verification failed: {:?}", verification);
         }
 
         // Create template
-        self.transition_to(BuildState::Finalizing)?;
+        self.transition_to(BuildState::Finalizing);
         let template_path = self
             .finalize_template(&vm_handle)
             .await
@@ -155,13 +178,13 @@ impl ImageBuilder {
 
         let size_bytes = tokio::fs::metadata(&template_path).await?.len();
 
-        self.transition_to(BuildState::Complete)?;
+        self.transition_to(BuildState::Complete);
 
         let build_duration = start_time.elapsed();
         info!("Build completed in {:?}", build_duration);
         
         // Build succeeded - preserve the VM (prevent cleanup)
-        _vm_guard.preserve();
+        vm_guard.preserve();
         info!("✅ VM preserved (cleanup disabled)");
 
         Ok(BuildResult {
@@ -173,10 +196,9 @@ impl ImageBuilder {
     }
 
     /// Transition to a new state
-    fn transition_to(&mut self, new_state: BuildState) -> Result<()> {
+    fn transition_to(&mut self, new_state: BuildState) {
         info!("State transition: {:?} -> {:?}", self.state, new_state);
         self.state = new_state;
-        Ok(())
     }
 
     /// Extract packages from post_boot_steps that should be installed via cloud-init
@@ -257,7 +279,9 @@ impl ImageBuilder {
                         .cloned()
                         .collect();
                     
-                    if !remaining_packages.is_empty() {
+                    if remaining_packages.is_empty() {
+                        info!("Skipping post-boot InstallPackages step (all packages moved to cloud-init)");
+                    } else {
                         // Keep the step but with only custom packages
                         filtered_steps.push(PostBootStep::InstallPackages {
                             packages: remaining_packages,
@@ -265,8 +289,6 @@ impl ImageBuilder {
                             timeout_secs: *timeout_secs,
                             description: description.clone(),
                         });
-                    } else {
-                        info!("Skipping post-boot InstallPackages step (all packages moved to cloud-init)");
                     }
                 }
                 // All other steps pass through unchanged
@@ -281,7 +303,7 @@ impl ImageBuilder {
     ///
     /// Deep debt solution: This generates cloud-init entirely from the manifest,
     /// eliminating hardcoding and enabling full declarative configuration.
-    fn create_cloud_init(&self, ssh_public_key: String) -> Result<benchscale::CloudInit> {
+    fn create_cloud_init(&self, ssh_public_key: String) -> benchscale::CloudInit {
         use benchscale::CloudInit;
 
         let mut builder = CloudInit::builder();
@@ -290,16 +312,14 @@ impl ImageBuilder {
         // This eliminates the need for sudo in post-boot scripts entirely
         builder = builder.with_noninteractive_apt();
 
-        // MISE EN PLACE: Configure local package mirror for airgap operation
-        // This enables 10-50x faster builds and airgap deployments
-        // TEMPORARY: Disabled to isolate idiomatic Rust fix testing
-        // builder = builder.with_local_mirror("http://192.168.122.1:8080");
+        // Local mirror support (airgap operation) is available via
+        // `builder.with_local_mirror(url)` when a package mirror is configured.
 
         // Add users from manifest (not hardcoded!)
         if self.manifest.users.is_empty() {
             // Fallback: create default user if none specified
             warn!("No users defined in manifest, creating default 'builder' user");
-            builder = builder.add_user("builder", ssh_public_key.clone());
+            builder = builder.add_user("builder", ssh_public_key);
         } else {
             for user in &self.manifest.users {
                 builder = builder.add_user(&user.name, ssh_public_key.clone());
@@ -315,8 +335,6 @@ impl ImageBuilder {
         }
 
         // Process build steps from manifest using enum pattern matching (idiomatic Rust)
-        use crate::templates::BuildStep;
-
         for step in &self.manifest.build_steps {
             match step {
                 BuildStep::InstallPackages { packages } => {
@@ -354,7 +372,7 @@ impl ImageBuilder {
                 BuildStep::DownloadFile { url, dest } => {
                     // Check if we have a local file to inject instead of downloading
                     // Look for local file in packages/ or debs/ directories
-                    let local_file = self.find_local_package(url);
+                    let local_file = Self::find_local_package(url);
 
                     if let Some(local_path) = local_file {
                         info!(
@@ -403,12 +421,12 @@ impl ImageBuilder {
             }
         }
 
-        Ok(builder.build())
+        builder.build()
     }
 
     /// Create cloud-init configuration for COSMIC desktop using benchScale builder
     /// OLD: Create cloud-init YAML string (deprecated)
-    fn _create_cosmic_cloud_init_yaml_deprecated(&self, ssh_public_key: String) -> Result<String> {
+    fn _create_cosmic_cloud_init_yaml_deprecated(ssh_public_key: &str) -> String {
         let cloud_init = format!(
             r#"#cloud-config
 users:
@@ -474,7 +492,7 @@ final_message: |
             ssh_public_key
         );
 
-        Ok(cloud_init)
+        cloud_init
     }
 
     /// Create the builder VM using benchScale with manifest configuration
@@ -483,6 +501,7 @@ final_message: |
     /// instead of hardcoded paths and IPs.
     ///
     /// Returns both the VmHandle and a VmGuard for automatic cleanup on failure.
+    #[allow(clippy::too_many_lines)] // VM bring-up: senescence monitor, cloud-init, network, post-boot
     async fn create_builder_vm(&self, cloud_init: benchscale::CloudInit) -> Result<(VmHandle, benchscale::backend::libvirt::VmGuard)> {
         use benchscale::backend::LibvirtBackend;
         use std::path::Path;
@@ -505,9 +524,17 @@ final_message: |
         // Get base image path from manifest
         let base_image = Path::new(&self.manifest.base_image);
 
+        // Convert manifest PCI passthrough configs to benchScale types
+        let pci_devices: Vec<benchscale::PciPassthroughDevice> = self
+            .manifest
+            .pci_passthrough
+            .iter()
+            .map(|p| benchscale::PciPassthroughDevice { bdf: p.bdf.clone() })
+            .collect();
+
         // Create VM using benchScale with manifest-defined resources
         let mut node = backend
-            .create_desktop_vm(
+            .create_desktop_vm_with_pci(
                 &self.manifest.name,
                 base_image,
                 &cloud_init,
@@ -526,7 +553,8 @@ final_message: |
                     .disk_gb
                     .try_into()
                     .context("Invalid disk size")?,
-                self.manifest.resources.static_ip.clone(), // DEEP DEBT: Pass static IP from manifest
+                self.manifest.resources.static_ip.clone(),
+                &pci_devices,
             )
             .await
             .context("Failed to create desktop VM")?;
@@ -618,7 +646,7 @@ final_message: |
                 );
             }
         }).await {
-            Ok(_) => {
+            Ok(()) => {
                 info!("✅ Cloud-init completed successfully");
                 println!("✅ Cloud-init completed successfully!");
             }
@@ -705,19 +733,16 @@ final_message: |
     /// - If manifest has users: Returns first user's name  
     /// - If no users: Returns "ubuntu" with warning (may fail on non-Ubuntu systems)
     fn get_username_with_fallback(&self) -> &str {
-        match self.manifest.users.first() {
-            Some(user) => {
-                debug!("Using username from manifest: {}", user.name);
-                &user.name
-            }
-            None => {
-                warn!(
-                    "No users in manifest, defaulting to 'ubuntu' - \
-                     this may fail on non-Ubuntu systems. \
-                     Add a user to your manifest for reliability."
-                );
-                "ubuntu"
-            }
+        if let Some(user) = self.manifest.users.first() {
+            debug!("Using username from manifest: {}", user.name);
+            &user.name
+        } else {
+            warn!(
+                "No users in manifest, defaulting to 'ubuntu' - \
+                 this may fail on non-Ubuntu systems. \
+                 Add a user to your manifest for reliability."
+            );
+            "ubuntu"
         }
     }
 
@@ -749,14 +774,13 @@ final_message: |
                 Ok(status) => {
                     if status.finished {
                         info!("Cloud-init completed successfully");
-                        self.transition_to(BuildState::Complete)?;
+                        self.transition_to(BuildState::Complete);
                         break;
                     } else if !status.errors.is_empty() {
                         error!("Cloud-init errors: {:?}", status.errors);
                         bail!("Cloud-init failed: {:?}", status.errors);
-                    } else {
-                        info!("Cloud-init running: {}", status.status);
                     }
+                    info!("Cloud-init running: {}", status.status);
                 }
                 Err(e) => {
                     // SSH might not be ready yet
@@ -768,32 +792,11 @@ final_message: |
         Ok(())
     }
 
-    /// Update build state based on cloud-init status
-    ///
-    /// TODO: This will be used by the full manifest-driven build() method
-    #[allow(dead_code)]
-    fn update_state_from_cloud_init(&mut self, status: &CloudInitStatus) -> Result<()> {
-        let new_state = match status {
-            CloudInitStatus::Running { stage } => {
-                match stage {
-                    CloudInitStage::Init => BuildState::CloudInitInit,
-                    CloudInitStage::Config => BuildState::InstallingPackages { progress: 0.3 },
-                    CloudInitStage::Final => BuildState::Finalizing,
-                    _ => return Ok(()), // Don't transition for other stages
-                }
-            }
-            CloudInitStatus::Done => BuildState::CloudInitComplete,
-            CloudInitStatus::Error { .. } => return Ok(()), // Error handled elsewhere
-        };
-
-        self.transition_to(new_state)
-    }
-
     /// Find local package file for injection instead of downloading
     ///
     /// Looks in packages/ and debs/ directories for matching files.
     /// Returns the path if found, None otherwise.
-    fn find_local_package(&self, url: &str) -> Option<PathBuf> {
+    fn find_local_package(url: &str) -> Option<PathBuf> {
         // Extract filename from URL
         let filename = url.rsplit('/').next()?;
 

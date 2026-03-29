@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! Template Registry System
 //!
 //! Provides reproducible template management with manifests, verification,

@@ -1,8 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 use anyhow::{Context, Result};
 use benchscale::backend::libvirt::{VmRegistry, VmStatus};
-use benchscale::LibvirtBackend;
 use clap::{Parser, Subcommand};
-use tracing::{info, warn};
 use virt::connect::Connect;
 use virt::domain::Domain;
 
@@ -81,7 +80,7 @@ async fn show_status() -> Result<()> {
     
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs();
     
     for entry in entries {
@@ -182,9 +181,9 @@ async fn clean_stale(max_age: u64, execute: bool) -> Result<()> {
     for entry in &stale {
         let age = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs()
-            - entry.updated_at;
+            .saturating_sub(entry.updated_at);
         println!("  • {} ({:?}, age: {}s)", entry.name, entry.status, age);
     }
     

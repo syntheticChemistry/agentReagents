@@ -1,14 +1,13 @@
 [package]
 name = "agent-reagents"
 version = "0.1.0"
-edition = "2021"
-authors = ["biomeOS Team"]
-description = "VM image and package management for biomeOS ecosystem"
-license = "MIT"
+edition = "2024"
+authors = ["ecoPrimals <dev@ecoprimals.org>"]
+description = "Template-driven VM image builder for the ecoPrimals ecosystem"
+license = "AGPL-3.0-only"
 
 [workspace]
-# This is a standalone project, NOT part of a parent workspace
-# Each syntheticChemistry project is sovereign and independently versioned
+# Standalone project — independently versioned within ecoPrimals/infra
 
 [dependencies]
 # Async runtime

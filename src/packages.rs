@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! Package management
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 /// Package type
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackageType {
     /// Debian package (.deb)
     Deb,
@@ -19,9 +20,13 @@ pub enum PackageType {
 /// Discovered package
 #[derive(Debug, Clone)]
 pub struct Package {
+    /// File name (without guaranteed semantic version parsing).
     pub name: String,
+    /// Path to the package file under `reagents/`.
     pub path: PathBuf,
+    /// Inferred archive or package kind.
     pub package_type: PackageType,
+    /// File size in bytes.
     pub size_bytes: u64,
 }
 
@@ -58,31 +63,27 @@ impl PackageManager {
         Ok(packages.into_iter().find(|pkg| pkg.name.contains(name)))
     }
 
-    /// Recursively scan directory for packages
-    fn scan_directory<'a>(
-        &'a self,
-        dir: &'a Path,
-        packages: &'a mut Vec<Package>,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + 'a>> {
-        Box::pin(async move {
-            let mut entries = tokio::fs::read_dir(dir)
+    /// Recursively scan directory for packages (iterative, `Send` for async callers).
+    async fn scan_directory(&self, dir: &Path, packages: &mut Vec<Package>) -> Result<()> {
+        let mut stack = vec![dir.to_path_buf()];
+        while let Some(current) = stack.pop() {
+            let mut entries = tokio::fs::read_dir(&current)
                 .await
-                .context(format!("Failed to read directory: {:?}", dir))?;
+                .context(format!("Failed to read directory: {}", current.display()))?;
 
             while let Some(entry) = entries.next_entry().await? {
                 let path = entry.path();
 
                 if path.is_dir() {
-                    self.scan_directory(&path, packages).await?;
-                } else if path.is_file() {
-                    if let Some(package) = self.parse_package(&path).await? {
+                    stack.push(path);
+                } else if path.is_file()
+                    && let Some(package) = self.parse_package(&path).await? {
                         packages.push(package);
                     }
-                }
             }
+        }
 
-            Ok(())
-        })
+        Ok(())
     }
 
     /// Parse a file as a package

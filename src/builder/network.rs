@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 //! Network monitoring and resilience for VM builds
 //!
 //! Provides continuous network verification and automatic recovery mechanisms
@@ -44,19 +45,19 @@ impl NetworkMonitor {
     }
 
     /// Set the check interval
-    pub fn with_check_interval(mut self, interval: Duration) -> Self {
+    pub const fn with_check_interval(mut self, interval: Duration) -> Self {
         self.check_interval = interval;
         self
     }
 
     /// Set the maximum consecutive failures
-    pub fn with_max_failures(mut self, max: usize) -> Self {
+    pub const fn with_max_failures(mut self, max: usize) -> Self {
         self.max_failures = max;
         self
     }
 
     /// Set the check timeout
-    pub fn with_check_timeout(mut self, timeout: Duration) -> Self {
+    pub const fn with_check_timeout(mut self, timeout: Duration) -> Self {
         self.check_timeout = timeout;
         self
     }
@@ -151,7 +152,7 @@ impl NetworkMonitor {
 
         loop {
             match self.check_connectivity(username).await {
-                Ok(_) => {
+                Ok(()) => {
                     if consecutive_failures > 0 {
                         info!(
                             "✅ Network recovered after {} failures",
@@ -171,7 +172,7 @@ impl NetworkMonitor {
                     if consecutive_failures >= self.max_failures {
                         info!("🔧 Max failures reached, attempting recovery...");
                         match self.attempt_recovery(vm_handle, username).await {
-                            Ok(_) => {
+                            Ok(()) => {
                                 info!("✅ Network recovery succeeded");
                                 consecutive_failures = 0;
                             }
@@ -258,7 +259,7 @@ impl NetworkMonitor {
 
         for attempt in 1..=retries {
             match self.check_connectivity(username).await {
-                Ok(_) => {
+                Ok(()) => {
                     info!(
                         "✅ Network verification successful (attempt {})",
                         attempt
