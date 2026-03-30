@@ -40,19 +40,19 @@ echo "✅ Using cloud image: $(basename "${BASE_IMAGE}")"
 echo "✅ RustDesk: $(basename "${RUSTDESK_DEB}")"
 echo ""
 
-# Copy base image to libvirt directory
+# Copy base image to libvirt directory (/var/lib/libvirt/images is 775 root:libvirt)
 echo "📋 Preparing base image..."
-sudo cp "${BASE_IMAGE}" "${LIBVIRT_IMAGES}/ubuntu-24-base.qcow2"
-sudo chown libvirt-qemu:kvm "${LIBVIRT_IMAGES}/ubuntu-24-base.qcow2"
+cp "${BASE_IMAGE}" "${LIBVIRT_IMAGES}/ubuntu-24-base.qcow2"
+chmod 644 "${LIBVIRT_IMAGES}/ubuntu-24-base.qcow2"
 
 # Create working disk from base
 echo "💿 Creating 25GB working disk..."
-sudo qemu-img create -f qcow2 -b "${LIBVIRT_IMAGES}/ubuntu-24-base.qcow2" -F qcow2 "${WORK_DISK}" 25G
-sudo qemu-img resize "${WORK_DISK}" 25G
+qemu-img create -f qcow2 -b "${LIBVIRT_IMAGES}/ubuntu-24-base.qcow2" -F qcow2 "${WORK_DISK}" 25G
+qemu-img resize "${WORK_DISK}" 25G
 
 # Copy RustDesk to accessible location
 echo "📦 Preparing RustDesk package..."
-sudo cp "${RUSTDESK_DEB}" "${LIBVIRT_IMAGES}/rustdesk.deb"
+cp "${RUSTDESK_DEB}" "${LIBVIRT_IMAGES}/rustdesk.deb"
 
 # Generate SSH key
 TEMP_DIR=$(mktemp -d)
@@ -142,8 +142,9 @@ echo "   This will take 20-30 minutes for package installation..."
 echo "   VM will automatically shutdown when complete."
 echo ""
 
-# Create VM
-sudo virt-install \
+# Create VM (no sudo: user is in libvirt group)
+virt-install \
+    --connect qemu:///system \
     --name "${VM_NAME}" \
     --memory 4096 \
     --vcpus 2 \
@@ -156,17 +157,17 @@ sudo virt-install \
     --cloud-init user-data="${USER_DATA}",meta-data="${META_DATA}"
 
 echo "⏳ Waiting for VM to complete setup and shutdown..."
-echo "   You can monitor with: sudo virsh console ${VM_NAME}"
+echo "   You can monitor with: virsh console ${VM_NAME}"
 echo ""
 
 # Wait for VM to shutdown
 TIMEOUT=2400  # 40 minutes
 ELAPSED=0
-while sudo virsh domstate "${VM_NAME}" 2>/dev/null | grep -q "running"; do
+while virsh domstate "${VM_NAME}" 2>/dev/null | grep -q "running"; do
     sleep 10
     ELAPSED=$((ELAPSED + 10))
     if [ $ELAPSED -ge $TIMEOUT ]; then
-        echo "❌ Timeout. Check with: sudo virsh console ${VM_NAME}"
+        echo "❌ Timeout. Check with: virsh console ${VM_NAME}"
         exit 1
     fi
     if [ $((ELAPSED % 60)) -eq 0 ]; then
@@ -179,21 +180,19 @@ echo ""
 
 # Finalize
 echo "🗜️  Compressing template..."
-sudo virsh undefine "${VM_NAME}"
-sudo qemu-img convert -O qcow2 -c "${WORK_DISK}" "${FINAL_TEMPLATE}"
-sudo chown libvirt-qemu:kvm "${FINAL_TEMPLATE}"
-sudo chmod 644 "${FINAL_TEMPLATE}"
+virsh undefine "${VM_NAME}"
+qemu-img convert -O qcow2 -c "${WORK_DISK}" "${FINAL_TEMPLATE}"
+chmod 644 "${FINAL_TEMPLATE}"
 
 # Copy to agentReagents
 echo "📦 Saving to agentReagents..."
 REAGENTS_TEMPLATE="${REAGENTS_ROOT}/images/templates/popos-cosmic-rustdesk-template.qcow2"
 mkdir -p "$(dirname "${REAGENTS_TEMPLATE}")"
-sudo cp "${FINAL_TEMPLATE}" "${REAGENTS_TEMPLATE}"
-sudo chown $(whoami):$(whoami) "${REAGENTS_TEMPLATE}"
+cp "${FINAL_TEMPLATE}" "${REAGENTS_TEMPLATE}"
 
 # Cleanup
 rm -rf "${TEMP_DIR}"
-sudo rm -f "${LIBVIRT_IMAGES}/rustdesk.deb"
+rm -f "${LIBVIRT_IMAGES}/rustdesk.deb"
 
 TEMPLATE_SIZE=$(du -h "${FINAL_TEMPLATE}" | cut -f1)
 

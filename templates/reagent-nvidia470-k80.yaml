@@ -16,6 +16,11 @@ resources:
 pci_passthrough:
   - bdf: "0000:4d:00.0"
 
+shared_dirs:
+  - source: "/tmp/k80-reagent/artifacts"
+    target: "reagent_share"
+    mode: "mapped"
+
 users:
   - name: reagent
     password: reagent
@@ -29,13 +34,18 @@ build_steps:
 
   - type: install_packages
     packages:
-      - linux-headers-generic
       - build-essential
       - pciutils
       - trace-cmd
       - kmod
       - wget
       - python3
+      - dkms
+
+  - type: run_command
+    description: "Install kernel headers matching the running kernel"
+    command: |
+      apt-get install -y "linux-headers-$(uname -r)"
 
   - type: run_command
     description: "Download nvidia-470 driver installer"
@@ -58,7 +68,11 @@ build_steps:
       set -euo pipefail
 
       ARTIFACTS=/opt/reagent/artifacts
-      mkdir -p "$ARTIFACTS"
+      SHARED=/mnt/reagent_share
+      mkdir -p "$ARTIFACTS" "$SHARED"
+
+      # Mount 9p shared directory for artifact extraction (no post-mortem disk mount)
+      mount -t 9p -o trans=virtio,version=9p2000.L reagent_share "$SHARED" 2>/dev/null || echo "WARN: 9p share not available, artifacts will stay on guest disk"
 
       K80_BDF=$(lspci -d 10de:102d -D | head -1 | awk '{print $1}')
       if [ -z "$K80_BDF" ]; then
@@ -70,40 +84,58 @@ build_steps:
       BAR0=$(cat /sys/bus/pci/devices/$K80_BDF/resource | head -1 | awk '{print $1}')
       echo "BAR0 physical address: $BAR0"
 
-      echo "=== Phase 1: Capture cold BAR0 snapshot ==="
-      python3 /opt/reagent/snapshot-bar0.py "$K80_BDF" "$ARTIFACTS/cold_bar0.json"
+      echo "=== Phase 1: Unbind device for cold BAR0 snapshot ==="
+      DRIVER=$(basename "$(readlink /sys/bus/pci/devices/$K80_BDF/driver 2>/dev/null)" 2>/dev/null || echo "NONE")
+      if [ "$DRIVER" != "NONE" ]; then
+        echo "$K80_BDF" > "/sys/bus/pci/drivers/$DRIVER/unbind" 2>/dev/null || true
+        sleep 1
+      fi
 
-      echo "=== Phase 2: Enable mmiotrace ==="
+      echo "=== Phase 2: Capture cold BAR0 snapshot ==="
+      python3 /opt/reagent/snapshot-bar0.py "$K80_BDF" "$ARTIFACTS/cold_bar0.json" || echo "WARN: cold BAR0 snapshot failed (expected if device needs driver)"
+
+      echo "=== Phase 3: Enable mmiotrace ==="
+      mount -t debugfs none /sys/kernel/debug 2>/dev/null || true
       echo mmiotrace > /sys/kernel/debug/tracing/current_tracer
       echo 1 > /sys/kernel/debug/tracing/tracing_on
       echo "mmiotrace active"
 
-      echo "=== Phase 3: Build and load nvidia-470 module ==="
+      echo "=== Phase 4: Build and load nvidia-470 module ==="
       cd /opt/nvidia-470
-      ./nvidia-installer --kernel-module-only --no-questions --ui=none 2>&1 || true
+      ./nvidia-installer --no-questions --ui=none 2>&1 || true
       modprobe nvidia 2>&1 || true
 
       sleep 5
       echo "nvidia module loaded, waiting for init to settle..."
       sleep 10
 
-      echo "=== Phase 4: Disable mmiotrace, capture trace ==="
+      echo "=== Phase 5: Disable mmiotrace, capture trace ==="
       echo 0 > /sys/kernel/debug/tracing/tracing_on
       echo nop > /sys/kernel/debug/tracing/current_tracer
       cp /sys/kernel/debug/tracing/trace "$ARTIFACTS/mmiotrace.log"
       echo "mmiotrace captured: $(wc -l < $ARTIFACTS/mmiotrace.log) lines"
 
-      echo "=== Phase 5: Capture warm BAR0 snapshot ==="
+      echo "=== Phase 6: Capture warm BAR0 snapshot ==="
       python3 /opt/reagent/snapshot-bar0.py "$K80_BDF" "$ARTIFACTS/warm_bar0.json"
 
-      echo "=== Phase 6: Unload nvidia ==="
+      echo "=== Phase 7: Unload nvidia ==="
       rmmod nvidia_uvm 2>/dev/null || true
       rmmod nvidia_modeset 2>/dev/null || true
       rmmod nvidia 2>/dev/null || true
 
+      echo "=== Phase 8: Sync artifacts to host via 9p ==="
+      dmesg > "$ARTIFACTS/dmesg.log" 2>/dev/null || true
+      lspci -vvv > "$ARTIFACTS/lspci.log" 2>/dev/null || true
+      if mountpoint -q "$SHARED"; then
+        cp -a "$ARTIFACTS"/* "$SHARED"/ 2>/dev/null || true
+        sync
+        echo "Artifacts synced to host via 9p shared directory"
+      else
+        echo "WARN: 9p share not mounted, artifacts remain on guest disk only"
+      fi
+
       echo "=== Capture complete ==="
       ls -la "$ARTIFACTS/"
-      echo "Artifacts ready for extraction at $ARTIFACTS/"
     mode: "0755"
 
   - type: create_file
@@ -128,9 +160,19 @@ build_steps:
 
       def snapshot(bdf, output_path):
           resource0 = f"/sys/bus/pci/devices/{bdf}/resource0"
-          fd = os.open(resource0, os.O_RDWR | os.O_SYNC)
-          size = os.path.getsize(resource0)
-          mm = mmap.mmap(fd, min(size, 0x800000), mmap.MAP_SHARED, mmap.PROT_READ)
+          # sysfs resource files report size 0; parse BAR size from `resource`
+          bar_size = 0x800000  # 8 MiB default for Kepler
+          try:
+              with open(f"/sys/bus/pci/devices/{bdf}/resource") as rf:
+                  line = rf.readline().strip().split()
+                  if len(line) >= 2:
+                      start, end = int(line[0], 16), int(line[1], 16)
+                      if end > start:
+                          bar_size = min(end - start + 1, 0x2000000)
+          except Exception:
+              pass
+          fd = os.open(resource0, os.O_RDONLY | os.O_SYNC)
+          mm = mmap.mmap(fd, bar_size, mmap.MAP_SHARED, mmap.PROT_READ)
 
           result = {"bdf": bdf, "regions": {}}
           for name, (start, end) in sorted(REGISTER_REGIONS.items()):

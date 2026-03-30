@@ -28,12 +28,9 @@ export_image() {
     echo "Exporting $name..."
     local dest="$EXPORT_DIR/${name}-${DATE}.qcow2"
     
-    sudo qemu-img convert -c -O qcow2 \
+    qemu-img convert -c -O qcow2 \
         "$IMAGES_DIR/$source" \
         "$dest"
-    
-    # Fix ownership
-    sudo chown $USER:$USER "$dest"
     
     local size=$(du -h "$dest" | cut -f1)
     echo "  ✅ $name exported ($size)"
