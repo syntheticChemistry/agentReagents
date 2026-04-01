@@ -71,7 +71,7 @@ These utility scripts are still valid:
 
 ## See Also
 
-- `../../DEEP_DEBT_ANALYSIS.md` - Full analysis of bash script issues
-- `../../DEEP_DEBT_SOLVED.md` - Rust solution architecture
-- `../../src/builder/` - Modern Rust implementation
+- `../../src/builder/` — Modern Rust implementation (`mod.rs`, `cloud_init.rs`, `vm_create.rs`)
+- `../../docs/` — Architecture documentation
+- `../../../wateringHole/handoffs/BENCHSCALE_AGENTREAGENTS_ECOSYSTEM_EVOLUTION_HANDOFF_MAR29_2026.md` — Ecosystem evolution handoff
 

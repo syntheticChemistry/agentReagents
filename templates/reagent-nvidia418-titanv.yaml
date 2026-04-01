@@ -1,0 +1,183 @@
+name: reagent-nvidia418-titanv
+version: 1.0.0
+description: |
+  Disposable VM for capturing nvidia-418 init sequence on Titan V (GV100).
+  GPU passed through via VFIO. mmiotrace captures full register write sequence.
+  VM is destroyed after capture — driver never touches host kernel.
+
+base_image: images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+
+resources:
+  memory_mb: 4096
+  vcpus: 4
+  disk_gb: 30
+  timeout_secs: 900
+
+pci_passthrough:
+  - bdf: "0000:03:00.0"
+
+users:
+  - name: reagent
+    password: reagent
+    groups:
+      - sudo
+      - users
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 300
+
+  - type: install_packages
+    packages:
+      - linux-headers-generic
+      - build-essential
+      - pciutils
+      - trace-cmd
+      - kmod
+      - wget
+      - python3
+
+  - type: run_command
+    description: "Download nvidia-418 driver installer"
+    command: |
+      cd /tmp
+      wget -q https://us.download.nvidia.com/tesla/418.226.00/NVIDIA-Linux-x86_64-418.226.00.run
+      chmod +x NVIDIA-Linux-x86_64-418.226.00.run
+
+  - type: run_command
+    description: "Extract nvidia-418 kernel module source (no install yet)"
+    command: |
+      cd /tmp
+      ./NVIDIA-Linux-x86_64-418.226.00.run --extract-only --target /opt/nvidia-418
+      echo "nvidia-418 extracted to /opt/nvidia-418"
+
+  - type: create_file
+    path: /opt/reagent/capture-mmiotrace.sh
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      ARTIFACTS=/opt/reagent/artifacts
+      mkdir -p "$ARTIFACTS"
+
+      GPU_BDF=$(lspci -d 10de:1d81 -D | head -1 | awk '{print $1}')
+      if [ -z "$GPU_BDF" ]; then
+        echo "ERROR: No Titan V (10de:1d81) found in VM"
+        exit 1
+      fi
+      echo "Found Titan V at $GPU_BDF"
+
+      BAR0=$(cat /sys/bus/pci/devices/$GPU_BDF/resource | head -1 | awk '{print $1}')
+      echo "BAR0 physical address: $BAR0"
+
+      echo "=== Phase 1: Capture cold BAR0 snapshot ==="
+      python3 /opt/reagent/snapshot-bar0.py "$GPU_BDF" "$ARTIFACTS/cold_bar0.json"
+
+      echo "=== Phase 2: Enable mmiotrace ==="
+      echo mmiotrace > /sys/kernel/debug/tracing/current_tracer
+      echo 1 > /sys/kernel/debug/tracing/tracing_on
+      echo "mmiotrace active"
+
+      echo "=== Phase 3: Build and load nvidia-418 module ==="
+      cd /opt/nvidia-418
+      ./nvidia-installer --kernel-module-only --no-questions --ui=none 2>&1 || true
+      modprobe nvidia 2>&1 || true
+
+      sleep 5
+      echo "nvidia module loaded, waiting for init to settle..."
+      sleep 10
+
+      echo "=== Phase 4: Disable mmiotrace, capture trace ==="
+      echo 0 > /sys/kernel/debug/tracing/tracing_on
+      echo nop > /sys/kernel/debug/tracing/current_tracer
+      cp /sys/kernel/debug/tracing/trace "$ARTIFACTS/mmiotrace.log"
+      echo "mmiotrace captured: $(wc -l < $ARTIFACTS/mmiotrace.log) lines"
+
+      echo "=== Phase 5: Capture warm BAR0 snapshot ==="
+      python3 /opt/reagent/snapshot-bar0.py "$GPU_BDF" "$ARTIFACTS/warm_bar0.json"
+
+      echo "=== Phase 6: Unload nvidia ==="
+      rmmod nvidia_uvm 2>/dev/null || true
+      rmmod nvidia_modeset 2>/dev/null || true
+      rmmod nvidia 2>/dev/null || true
+
+      echo "=== Capture complete ==="
+      ls -la "$ARTIFACTS/"
+      echo "Artifacts ready for extraction at $ARTIFACTS/"
+    mode: "0755"
+
+  - type: create_file
+    path: /opt/reagent/snapshot-bar0.py
+    content: |
+      #!/usr/bin/env python3
+      """Snapshot GPU BAR0 registers to JSON for diffing (GV100 / Titan V)."""
+      import json, mmap, os, struct, sys
+
+      REGISTER_REGIONS = {
+          "PMC":       (0x000000, 0x001000),
+          "PBUS":      (0x001000, 0x002000),
+          "PTIMER":    (0x009000, 0x00A000),
+          "PFB":       (0x100000, 0x101000),
+          "PFIFO":     (0x002000, 0x004000),
+          "PCOPY":     (0x104000, 0x105000),
+          "PGRAPH":    (0x400000, 0x402000),
+          "PCLOCK":    (0x137000, 0x138000),
+          "PPCI":      (0x088000, 0x089000),
+          "PROM":      (0x300000, 0x301000),
+          "FECS":      (0x409000, 0x40A000),
+          "GPCCS":     (0x41A000, 0x41B000),
+          "SEC2":      (0x840000, 0x841000),
+          "ACR":       (0x862000, 0x863000),
+      }
+
+      def snapshot(bdf, output_path):
+          resource0 = f"/sys/bus/pci/devices/{bdf}/resource0"
+          fd = os.open(resource0, os.O_RDWR | os.O_SYNC)
+          size = os.path.getsize(resource0)
+          mm = mmap.mmap(fd, min(size, 0x01000000), mmap.MAP_SHARED, mmap.PROT_READ)
+
+          result = {"bdf": bdf, "regions": {}}
+          for name, (start, end) in sorted(REGISTER_REGIONS.items()):
+              regs = {}
+              for offset in range(start, min(end, len(mm)), 4):
+                  try:
+                      val = struct.unpack_from("<I", mm, offset)[0]
+                      if val != 0 and val != 0xFFFFFFFF:
+                          regs[f"0x{offset:06x}"] = f"0x{val:08x}"
+                  except Exception:
+                      pass
+              result["regions"][name] = regs
+
+          mm.close()
+          os.close(fd)
+
+          with open(output_path, 'w') as f:
+              json.dump(result, f, indent=2)
+          print(f"Snapshot: {sum(len(v) for v in result['regions'].values())} non-zero registers -> {output_path}")
+
+      if __name__ == "__main__":
+          if len(sys.argv) != 3:
+              print(f"Usage: {sys.argv[0]} <bdf> <output.json>")
+              sys.exit(1)
+          snapshot(sys.argv[1], sys.argv[2])
+    mode: "0755"
+
+verification:
+  required_packages:
+    - build-essential
+    - pciutils
+    - trace-cmd
+  required_files:
+    - /opt/nvidia-418/nvidia-installer
+    - /opt/reagent/capture-mmiotrace.sh
+    - /opt/reagent/snapshot-bar0.py
+  verification_commands:
+    - command: "lspci -d 10de:1d81"
+      expected_exit_code: 0
+      description: "Titan V visible via PCI passthrough"
+
+metadata:
+  gpu: "Titan V (GV100)"
+  driver: "nvidia-418.226.00"
+  purpose: "reagent-capture"
+  disposable: "true"
