@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Cloud-init configuration generation (user-data and related manifest-driven setup).
 
@@ -24,7 +24,10 @@ impl ImageBuilder {
         let mut packages = Vec::new();
 
         for step in &self.manifest.post_boot_steps {
-            if let PostBootStep::InstallPackages { packages: pkg_list, .. } = step {
+            if let PostBootStep::InstallPackages {
+                packages: pkg_list, ..
+            } = step
+            {
                 for pkg in pkg_list {
                     // Only extract standard apt packages
                     // Custom binaries (.deb files, downloads) stay in post-boot
@@ -88,7 +91,9 @@ impl ImageBuilder {
                         .collect();
 
                     if remaining_packages.is_empty() {
-                        info!("Skipping post-boot InstallPackages step (all packages moved to cloud-init)");
+                        info!(
+                            "Skipping post-boot InstallPackages step (all packages moved to cloud-init)"
+                        );
                     } else {
                         // Keep the step but with only custom packages
                         filtered_steps.push(PostBootStep::InstallPackages {

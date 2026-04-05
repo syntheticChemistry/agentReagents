@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Network monitoring and resilience for VM builds
 //!
 //! Provides continuous network verification and automatic recovery mechanisms
@@ -143,11 +143,7 @@ impl NetworkMonitor {
     ///
     /// # Returns
     /// Only returns on unrecoverable errors
-    pub async fn monitor_with_recovery(
-        &self,
-        vm_handle: &VmHandle,
-        username: &str,
-    ) -> Result<()> {
+    pub async fn monitor_with_recovery(&self, vm_handle: &VmHandle, username: &str) -> Result<()> {
         let mut consecutive_failures = 0;
 
         loop {
@@ -217,7 +213,11 @@ impl NetworkMonitor {
         info!("🔧 Network recovery: Applying netplan configuration...");
 
         // Strategy 2: Reapply netplan
-        if vm_handle.ssh_exec(username, "sudo netplan apply").await.is_ok() {
+        if vm_handle
+            .ssh_exec(username, "sudo netplan apply")
+            .await
+            .is_ok()
+        {
             sleep(Duration::from_secs(5)).await;
             if self.check_connectivity(username).await.is_ok() {
                 info!("✅ Recovery successful via netplan apply");
@@ -260,10 +260,7 @@ impl NetworkMonitor {
         for attempt in 1..=retries {
             match self.check_connectivity(username).await {
                 Ok(()) => {
-                    info!(
-                        "✅ Network verification successful (attempt {})",
-                        attempt
-                    );
+                    info!("✅ Network verification successful (attempt {})", attempt);
                     return Ok(());
                 }
                 Err(e) => {
@@ -307,4 +304,3 @@ mod tests {
         assert_eq!(monitor.check_timeout, Duration::from_secs(10));
     }
 }
-

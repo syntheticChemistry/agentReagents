@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! VM Handle for managing builder VMs
 //!
 //! Provides a high-level interface for interacting with VMs during the build process.
@@ -90,7 +90,7 @@ impl VmHandle {
             .arg("-o")
             .arg("UserKnownHostsFile=/dev/null")
             .arg("-o")
-            .arg("LogLevel=ERROR")  // Evolution #18: Suppress warnings in stderr
+            .arg("LogLevel=ERROR") // Evolution #18: Suppress warnings in stderr
             .arg(format!("{}@{}", user, self.node.ip_address))
             .arg(cmd)
             .output()
@@ -101,7 +101,7 @@ impl VmHandle {
             // Evolution #18: Filter SSH warnings from error message
             let stderr = String::from_utf8_lossy(&output.stderr);
             let filtered_error = Self::filter_ssh_warnings(&stderr);
-            
+
             anyhow::bail!(
                 "Command failed with exit code {}: {}",
                 output.status.code().unwrap_or(-1),

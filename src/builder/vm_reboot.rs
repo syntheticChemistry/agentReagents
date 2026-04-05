@@ -1,12 +1,12 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Robust VM reboot handling with deep diagnostics.
 //!
 //! VM reboot recovery that goes beyond simple SSH polling to understand why a VM
 //! might not respond after reboot.
 
 use crate::builder::vm_handle::VmHandle;
-use std::fmt::Write;
 use anyhow::Result;
+use std::fmt::Write;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
@@ -59,10 +59,10 @@ impl Default for RebootConfig {
     fn default() -> Self {
         Self {
             initial_wait_secs: 120,      // 2 minutes initial wait
-            max_wait_secs: 600,           // 10 minutes max (desktop environments)
-            check_interval_secs: 5,       // Check every 5 seconds
-            stabilization_wait_secs: 10,  // 10 seconds stabilization
-            gather_diagnostics: true,     // Always gather diagnostics
+            max_wait_secs: 600,          // 10 minutes max (desktop environments)
+            check_interval_secs: 5,      // Check every 5 seconds
+            stabilization_wait_secs: 10, // 10 seconds stabilization
+            gather_diagnostics: true,    // Always gather diagnostics
         }
     }
 }
@@ -91,7 +91,7 @@ pub async fn execute_reboot(
     config: &RebootConfig,
 ) -> Result<RebootState> {
     info!("  🔄 Rebooting VM with deep diagnostics...");
-    
+
     // Step 1: Initiate reboot
     let reboot_cmd = "sudo shutdown -r now";
     match vm.ssh_exec(username, reboot_cmd).await {
@@ -103,11 +103,14 @@ pub async fn execute_reboot(
             debug!("     SSH connection closed (expected): {}", e);
         }
     }
-    
+
     // Step 2: Initial wait for reboot to complete
-    info!("     ⏳ Waiting {}s for initial reboot phase...", config.initial_wait_secs);
+    info!(
+        "     ⏳ Waiting {}s for initial reboot phase...",
+        config.initial_wait_secs
+    );
     tokio::time::sleep(Duration::from_secs(config.initial_wait_secs)).await;
-    
+
     // Step 3: Poll for SSH with diagnostics
     let max_attempts = config.max_wait_secs / config.check_interval_secs;
     info!(
@@ -115,18 +118,18 @@ pub async fn execute_reboot(
         config.max_wait_secs / 60,
         config.check_interval_secs
     );
-    
+
     let start = std::time::Instant::now();
     let mut last_state: Option<RebootState> = None;
-    
+
     for attempt in 1..=max_attempts {
         tokio::time::sleep(Duration::from_secs(config.check_interval_secs)).await;
-        
+
         let elapsed_secs = start.elapsed().as_secs();
-        
+
         // Check SSH connectivity
         let ssh_check = vm.ssh_exec(username, "echo 'reboot-check'").await;
-        
+
         match ssh_check {
             Ok(output) if output.trim() == "reboot-check" => {
                 // SSH is responsive!
@@ -137,44 +140,59 @@ pub async fn execute_reboot(
                     ssh_error: None,
                     boot_diagnostics: None,
                 };
-                
+
                 info!(
                     "     ✅ SSH responsive after {} seconds ({} attempts)",
                     elapsed_secs, attempt
                 );
-                
+
                 // Step 4: Gather boot diagnostics for validation
                 if config.gather_diagnostics {
                     info!("     📊 Gathering boot diagnostics...");
                     match gather_boot_diagnostics(vm, username).await {
                         Ok(diagnostics) => {
                             info!("     ✅ Boot diagnostics:");
-                            info!("        • Systemd multi-user: {}", diagnostics.systemd_multi_user);
-                            info!("        • Systemd graphical: {}", diagnostics.systemd_graphical);
+                            info!(
+                                "        • Systemd multi-user: {}",
+                                diagnostics.systemd_multi_user
+                            );
+                            info!(
+                                "        • Systemd graphical: {}",
+                                diagnostics.systemd_graphical
+                            );
                             info!("        • SSH service: {}", diagnostics.ssh_service_active);
                             info!("        • Network: {}", diagnostics.network_configured);
-                            
+
                             return Ok(RebootState {
                                 boot_diagnostics: Some(diagnostics),
                                 ..final_state
                             });
                         }
                         Err(e) => {
-                            warn!("     ⚠️  Could not gather diagnostics (but SSH is working): {}", e);
+                            warn!(
+                                "     ⚠️  Could not gather diagnostics (but SSH is working): {}",
+                                e
+                            );
                             // Continue anyway - SSH works, which is what matters
                         }
                     }
                 }
-                
+
                 // Step 5: Stabilization wait
-                info!("     ⏳ Allowing system to stabilize ({}s)...", config.stabilization_wait_secs);
+                info!(
+                    "     ⏳ Allowing system to stabilize ({}s)...",
+                    config.stabilization_wait_secs
+                );
                 tokio::time::sleep(Duration::from_secs(config.stabilization_wait_secs)).await;
-                
+
                 return Ok(final_state);
             }
             Ok(_output) => {
                 // Unexpected output - SSH is working but command failed?
-                warn!("     ⚠️  SSH connected but unexpected response (attempt {}/{})", attempt, max_attempts);
+                warn!(
+                    "     ⚠️  SSH connected but unexpected response (attempt {}/{})",
+                    attempt, max_attempts
+                );
             }
             Err(e) => {
                 // SSH not ready yet - update state
@@ -185,9 +203,9 @@ pub async fn execute_reboot(
                     ssh_error: Some(e.to_string()),
                     boot_diagnostics: None,
                 };
-                
+
                 last_state = Some(state);
-                
+
                 // Log progress every 30 seconds
                 if attempt % 6 == 0 {
                     let minutes = elapsed_secs / 60;
@@ -201,22 +219,22 @@ pub async fn execute_reboot(
             }
         }
     }
-    
+
     // Step 6: Reboot timeout - gather comprehensive diagnostics
     let elapsed_secs = start.elapsed().as_secs();
     let minutes = elapsed_secs / 60;
     let seconds = elapsed_secs % 60;
-    
+
     warn!(
         "     ❌ Reboot timeout after {}m {}s ({} attempts)",
         minutes, seconds, max_attempts
     );
-    
+
     // Try to gather diagnostics even though SSH is not responding
     // This might work if VM is up but SSH is delayed
     let diagnostics = if config.gather_diagnostics {
         info!("     📊 Attempting to gather failure diagnostics...");
-        
+
         // Try multiple times with longer timeouts
         let mut diag_result = None;
         for retry in 1..=3 {
@@ -238,13 +256,13 @@ pub async fn execute_reboot(
     } else {
         None
     };
-    
+
     // Build detailed error message
     let mut error_msg = format!(
         "VM did not respond to SSH after reboot (waited {}m {}s, {} attempts)",
         minutes, seconds, max_attempts
     );
-    
+
     if let Some(ref diag) = diagnostics {
         error_msg.push_str("\n\n📊 Boot Diagnostics:");
         let _ = writeln!(
@@ -257,24 +275,29 @@ pub async fn execute_reboot(
             "\n  • Systemd graphical target: {}",
             diag.systemd_graphical
         );
-        let _ = writeln!(error_msg, "\n  • SSH service active: {}", diag.ssh_service_active);
+        let _ = writeln!(
+            error_msg,
+            "\n  • SSH service active: {}",
+            diag.ssh_service_active
+        );
         let _ = writeln!(
             error_msg,
             "\n  • Network configured: {}",
             diag.network_configured
         );
-        
+
         if !diag.recent_boot_messages.is_empty() {
             error_msg.push_str("\n\n📝 Recent boot messages:");
             for msg in diag.recent_boot_messages.iter().take(10) {
                 let _ = writeln!(error_msg, "\n  {}", msg);
             }
         }
-        
+
         // Suggest fixes based on diagnostics
         error_msg.push_str("\n\n💡 Suggested actions:");
         if !diag.systemd_multi_user {
-            error_msg.push_str("\n  • System not reaching multi-user target - check systemd services");
+            error_msg
+                .push_str("\n  • System not reaching multi-user target - check systemd services");
         }
         if !diag.ssh_service_active {
             error_msg.push_str("\n  • SSH service not starting - check sshd configuration");
@@ -290,12 +313,13 @@ pub async fn execute_reboot(
         error_msg.push_str("\n  • SSH service not starting on boot");
         error_msg.push_str("\n  • Network configuration issue preventing SSH access");
     }
-    
+
     if let Some(state) = last_state
-        && let Some(ref ssh_err) = state.ssh_error {
-            let _ = writeln!(error_msg, "\n\n🔍 Last SSH error: {}", ssh_err);
-        }
-    
+        && let Some(ref ssh_err) = state.ssh_error
+    {
+        let _ = writeln!(error_msg, "\n\n🔍 Last SSH error: {}", ssh_err);
+    }
+
     anyhow::bail!(error_msg)
 }
 
@@ -306,31 +330,40 @@ pub async fn execute_reboot(
 async fn gather_boot_diagnostics(vm: &VmHandle, username: &str) -> Result<BootDiagnostics> {
     // Check systemd targets
     let multi_user = vm
-        .ssh_exec(username, "systemctl is-active multi-user.target 2>/dev/null")
+        .ssh_exec(
+            username,
+            "systemctl is-active multi-user.target 2>/dev/null",
+        )
         .await
         .map(|s| s.trim() == "active")
         .unwrap_or(false);
-    
+
     let graphical = vm
         .ssh_exec(username, "systemctl is-active graphical.target 2>/dev/null")
         .await
         .map(|s| s.trim() == "active")
         .unwrap_or(false);
-    
+
     // Check SSH service
     let ssh_active = vm
-        .ssh_exec(username, "systemctl is-active ssh 2>/dev/null || systemctl is-active sshd 2>/dev/null")
+        .ssh_exec(
+            username,
+            "systemctl is-active ssh 2>/dev/null || systemctl is-active sshd 2>/dev/null",
+        )
         .await
         .map(|s| s.trim() == "active")
         .unwrap_or(false);
-    
+
     // Check network
     let network = vm
-        .ssh_exec(username, "ip addr show | grep 'inet ' | grep -v '127.0.0.1' | wc -l")
+        .ssh_exec(
+            username,
+            "ip addr show | grep 'inet ' | grep -v '127.0.0.1' | wc -l",
+        )
         .await
         .map(|s| s.trim().parse::<u32>().unwrap_or(0) > 0)
         .unwrap_or(false);
-    
+
     // Get recent boot messages
     let boot_messages = vm
         .ssh_exec(username, "journalctl -b -n 20 --no-pager 2>/dev/null")
@@ -339,7 +372,7 @@ async fn gather_boot_diagnostics(vm: &VmHandle, username: &str) -> Result<BootDi
         .lines()
         .map(std::string::ToString::to_string)
         .collect();
-    
+
     Ok(BootDiagnostics {
         systemd_multi_user: multi_user,
         systemd_graphical: graphical,
@@ -348,4 +381,3 @@ async fn gather_boot_diagnostics(vm: &VmHandle, username: &str) -> Result<BootDi
         recent_boot_messages: boot_messages,
     })
 }
-

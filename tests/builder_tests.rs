@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // Unit and Integration Tests for agentReagents Builder
 //
 // Purpose: Validate idiomatic Rust patterns and post-boot execution logic
@@ -27,19 +27,31 @@ mod post_boot_tests {
         let completion_marker = format!("/tmp/apt-complete-{}", unique_id);
 
         // Validate format
-        assert!(marker_file.starts_with("/tmp/apt-progress-"), "Marker file should have correct prefix");
-        assert!(marker_file.ends_with(".log"), "Marker file should end with .log");
-        assert!(completion_marker.starts_with("/tmp/apt-complete-"), "Completion marker should have correct prefix");
-        
+        assert!(
+            marker_file.starts_with("/tmp/apt-progress-"),
+            "Marker file should have correct prefix"
+        );
+        assert!(
+            marker_file.ends_with(".log"),
+            "Marker file should end with .log"
+        );
+        assert!(
+            completion_marker.starts_with("/tmp/apt-complete-"),
+            "Completion marker should have correct prefix"
+        );
+
         // Validate uniqueness by checking different timestamps produce different IDs
         std::thread::sleep(Duration::from_secs(1));
-        
+
         let unique_id2 = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
-            
-        assert_ne!(unique_id, unique_id2, "Different timestamps should produce different IDs");
+
+        assert_ne!(
+            unique_id, unique_id2,
+            "Different timestamps should produce different IDs"
+        );
     }
 
     /// Test: Shell script content generation
@@ -47,7 +59,7 @@ mod post_boot_tests {
     /// Validates that generated shell scripts have correct structure
     #[test]
     fn test_shell_script_generation() {
-        let packages = vec!["htop".to_string(), "tree".to_string()];
+        let packages = ["htop".to_string(), "tree".to_string()];
         let marker_file = "/tmp/test-progress.log";
         let completion_marker = "/tmp/test-complete";
 
@@ -163,7 +175,10 @@ echo DONE > {}
         let script_path = format!("/tmp/apt_install_{}.sh", unique_id);
 
         assert!(script_path.starts_with("/tmp/"), "Script should be in /tmp");
-        assert!(script_path.ends_with(".sh"), "Script should have .sh extension");
+        assert!(
+            script_path.ends_with(".sh"),
+            "Script should have .sh extension"
+        );
         assert!(
             script_path.contains(&unique_id.to_string()),
             "Script should include unique ID"
@@ -179,14 +194,23 @@ echo DONE > {}
         let completion_marker = "/tmp/apt-complete-12345";
         let script_path = "/tmp/apt_install_12345.sh";
 
-        let cleanup_cmd = format!("rm -f {} {} {}", marker_file, completion_marker, script_path);
+        let cleanup_cmd = format!(
+            "rm -f {} {} {}",
+            marker_file, completion_marker, script_path
+        );
 
-        assert!(cleanup_cmd.contains(marker_file), "Should clean marker file");
+        assert!(
+            cleanup_cmd.contains(marker_file),
+            "Should clean marker file"
+        );
         assert!(
             cleanup_cmd.contains(completion_marker),
             "Should clean completion marker"
         );
-        assert!(cleanup_cmd.contains(script_path), "Should clean script file");
+        assert!(
+            cleanup_cmd.contains(script_path),
+            "Should clean script file"
+        );
         assert!(cleanup_cmd.starts_with("rm -f"), "Should use rm -f");
     }
 }
@@ -254,11 +278,20 @@ mod observability_tests {
     #[test]
     fn test_debug_log_format() {
         let status = "done";
-        let debug_msg = format!("🔍 Completion check: status='{}' (expecting 'done')", status);
+        let debug_msg = format!(
+            "🔍 Completion check: status='{}' (expecting 'done')",
+            status
+        );
 
-        assert!(debug_msg.contains("Completion check"), "Should identify operation");
+        assert!(
+            debug_msg.contains("Completion check"),
+            "Should identify operation"
+        );
         assert!(debug_msg.contains(status), "Should show actual status");
-        assert!(debug_msg.contains("expecting"), "Should show expected status");
+        assert!(
+            debug_msg.contains("expecting"),
+            "Should show expected status"
+        );
     }
 
     /// Test: Progress logging
@@ -270,13 +303,19 @@ mod observability_tests {
         let script_path = "/tmp/apt_install_12345.sh";
 
         let create_log = format!("📝 Creating install script on VM: {}", script_path);
-        let launch_log = format!("🚀 Launching: apt-get install {} (via script {})", package, script_path);
+        let launch_log = format!(
+            "🚀 Launching: apt-get install {} (via script {})",
+            package, script_path
+        );
         let complete_log = "✅ apt-get install completed";
 
         assert!(create_log.contains(script_path), "Should log script path");
         assert!(launch_log.contains(package), "Should log package name");
         assert!(launch_log.contains("via script"), "Should indicate method");
-        assert!(complete_log.contains("completed"), "Should indicate success");
+        assert!(
+            complete_log.contains("completed"),
+            "Should indicate success"
+        );
     }
 }
 
@@ -292,21 +331,17 @@ mod integration_tests {
     #[ignore = "needs a running VM with SSH for full apt install cycle"]
     fn test_full_apt_install_cycle() {
         // Placeholder for: SSH, script creation, background execution, completion, cleanup.
-        assert!(true);
     }
 
     #[test]
     #[ignore = "needs multiple VMs to validate concurrent builds and marker isolation"]
     fn test_concurrent_builds() {
         // Placeholder for fleet-style integration.
-        assert!(true);
     }
 
     #[test]
     #[ignore = "needs VM plus network simulation for SSH drop/recovery"]
     fn test_ssh_failure_recovery() {
         // Placeholder for resilience under flaky SSH.
-        assert!(true);
     }
 }
-

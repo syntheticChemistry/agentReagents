@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Package management
 
 use anyhow::{Context, Result};
@@ -77,9 +77,10 @@ impl PackageManager {
                 if path.is_dir() {
                     stack.push(path);
                 } else if path.is_file()
-                    && let Some(package) = self.parse_package(&path).await? {
-                        packages.push(package);
-                    }
+                    && let Some(package) = self.parse_package(&path).await?
+                {
+                    packages.push(package);
+                }
             }
         }
 

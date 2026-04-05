@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! VM verification system for agentReagents
 //!
 //! This module provides comprehensive verification of VM builds,
@@ -10,7 +10,7 @@
 
 use crate::builder::vm_handle::VmHandle;
 use crate::templates::TemplateManifest as Manifest;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write;
 use tracing::{debug, info, warn};
@@ -143,35 +143,35 @@ async fn verify_package_robust(
     package: &str,
 ) -> Result<PackageVerificationResult> {
     debug!("Robust verification for package: {}", package);
-    
+
     // Method 1: dpkg-query (most reliable)
     if let Ok(result) = check_dpkg_query(vm, username, package).await {
         debug!("Package {} verified via dpkg-query", package);
         return Ok(result);
     }
-    
+
     // Method 2: dpkg -l with output capture
     if let Ok(result) = check_dpkg_list(vm, username, package).await {
         debug!("Package {} verified via dpkg -l", package);
         return Ok(result);
     }
-    
+
     // Method 3: apt-cache policy
     if let Ok(result) = check_apt_cache(vm, username, package).await {
         debug!("Package {} verified via apt-cache", package);
         return Ok(result);
     }
-    
+
     // Method 4: Check if installed by dependency
     if let Ok(result) = check_installed_by_dependency(vm, username, package).await {
         debug!("Package {} found as dependency", package);
         return Ok(result);
     }
-    
+
     // All methods failed - gather comprehensive diagnostics
     warn!("All verification methods failed for package: {}", package);
     let details = gather_diagnostics(vm, username, package).await?;
-    
+
     Ok(PackageVerificationResult {
         package: package.to_string(),
         installed: false,
@@ -191,9 +191,9 @@ async fn check_dpkg_query(
         "dpkg-query -W -f='${{Status}}|${{Version}}|${{Package}}' {} 2>&1",
         shell_escape(package)
     );
-    
+
     let output = vm.ssh_exec(username, &cmd).await?;
-    
+
     // Parse output: "install ok installed|1.2.3|package-name"
     if output.contains("install ok installed") {
         let parts: Vec<&str> = output.split('|').collect();
@@ -209,7 +209,7 @@ async fn check_dpkg_query(
             },
         });
     }
-    
+
     // If failed, try with :amd64 suffix (common architecture suffix)
     if !package.contains(':') {
         let arch_package = format!("{}:amd64", package);
@@ -217,24 +217,25 @@ async fn check_dpkg_query(
             "dpkg-query -W -f='${{Status}}|${{Version}}|${{Package}}' {} 2>&1",
             shell_escape(&arch_package)
         );
-        
+
         if let Ok(output) = vm.ssh_exec(username, &cmd).await
-            && output.contains("install ok installed") {
-                let parts: Vec<&str> = output.split('|').collect();
-                return Ok(PackageVerificationResult {
-                    package: package.to_string(),
-                    installed: true,
-                    method: VerificationMethod::DpkgQuery,
-                    details: PackageDetails {
-                        actual_name: Some(arch_package),
-                        version: parts.get(1).map(|s| s.trim().to_string()),
-                        dpkg_status: Some(parts.first().map_or("", |s| s.trim()).to_string()),
-                        ..Default::default()
-                    },
-                });
-            }
+            && output.contains("install ok installed")
+        {
+            let parts: Vec<&str> = output.split('|').collect();
+            return Ok(PackageVerificationResult {
+                package: package.to_string(),
+                installed: true,
+                method: VerificationMethod::DpkgQuery,
+                details: PackageDetails {
+                    actual_name: Some(arch_package),
+                    version: parts.get(1).map(|s| s.trim().to_string()),
+                    dpkg_status: Some(parts.first().map_or("", |s| s.trim()).to_string()),
+                    ..Default::default()
+                },
+            });
+        }
     }
-    
+
     Err(anyhow!("Package not in 'install ok installed' state"))
 }
 
@@ -247,7 +248,7 @@ async fn check_dpkg_list(
     // Try exact name first
     let cmd = format!("dpkg -l {} 2>&1", shell_escape(package));
     let output = vm.ssh_exec(username, &cmd).await?;
-    
+
     // Parse dpkg -l output - look for lines starting with "ii"
     for line in output.lines() {
         if line.starts_with("ii") {
@@ -272,7 +273,7 @@ async fn check_dpkg_list(
             }
         }
     }
-    
+
     // If not found with exact name, try with wildcard to catch architecture suffixes
     if !package.contains(':') && !package.contains('*') {
         let wildcard_cmd = format!("dpkg -l '{}:*' 2>&1", shell_escape(package));
@@ -298,7 +299,7 @@ async fn check_dpkg_list(
             }
         }
     }
-    
+
     Err(anyhow!("No 'ii' status line found in dpkg -l output"))
 }
 
@@ -310,7 +311,7 @@ async fn check_apt_cache(
 ) -> Result<PackageVerificationResult> {
     let cmd = format!("apt-cache policy {} 2>&1", shell_escape(package));
     let output = vm.ssh_exec(username, &cmd).await?;
-    
+
     // Look for "Installed: <version>" line
     for line in output.lines() {
         if line.trim().starts_with("Installed:") {
@@ -330,7 +331,7 @@ async fn check_apt_cache(
             }
         }
     }
-    
+
     Err(anyhow!("apt-cache shows package as not installed"))
 }
 
@@ -348,25 +349,28 @@ async fn check_installed_by_dependency(
         "apt-cache rdepends --installed {} 2>&1 | tail -n +3 | head -20",
         shell_escape(package)
     );
-    
+
     let output = vm.ssh_exec(username, &cmd).await?;
-    
+
     let dependents: Vec<String> = output
         .lines()
         .map(|l| l.trim().to_string())
         .filter(|l| !l.is_empty() && !l.starts_with('|'))
         .collect();
-    
+
     if dependents.is_empty() {
         return Err(anyhow!("No installed reverse dependencies found"));
     }
-    
+
     // Check if any of the dependents are actually installed
     for dependent in &dependents {
         // Quick check using dpkg-query
         let check_cmd = format!("dpkg-query -W {} 2>/dev/null", shell_escape(dependent));
         if vm.ssh_exec(username, &check_cmd).await.is_ok() {
-            debug!("Found package {} installed as dependency of {}", package, dependent);
+            debug!(
+                "Found package {} installed as dependency of {}",
+                package, dependent
+            );
             return Ok(PackageVerificationResult {
                 package: package.to_string(),
                 installed: true,
@@ -381,7 +385,7 @@ async fn check_installed_by_dependency(
             });
         }
     }
-    
+
     Err(anyhow!("No installed dependents found"))
 }
 
@@ -393,56 +397,60 @@ async fn gather_diagnostics(
 ) -> Result<PackageDetails> {
     let mut alternatives = Vec::new();
     let mut raw_output = String::new();
-    
+
     // Try common package name variants (including architecture suffixes)
     let mut variants = vec![
         package.replace('-', "_"),
         format!("{}-dev", package),
         format!("lib{}", package),
     ];
-    
+
     // Add architecture suffix if not already present
     if !package.contains(':') {
         variants.insert(0, format!("{}:amd64", package));
         variants.push(format!("{}:all", package));
     }
-    
+
     for variant in &variants {
         if variant != package {
             alternatives.push(variant.clone());
-            
+
             // Quick check if variant exists
             let cmd = format!("dpkg-query -W {} 2>&1", shell_escape(variant));
             if let Ok(output) = vm.ssh_exec(username, &cmd).await {
                 let first_line = output.lines().next().unwrap_or("");
                 let _ = writeln!(raw_output, "Variant {}: {}", variant, first_line);
-                
-                if first_line.contains(&format!("{}\t", variant)) || output.contains("install ok installed") {
+
+                if first_line.contains(&format!("{}\t", variant))
+                    || output.contains("install ok installed")
+                {
                     let _ = writeln!(raw_output, "✓ Found as variant: {}", variant);
                 }
             }
         }
     }
-    
+
     // Try a wildcard search to see what's actually installed
     let wildcard_cmd = format!("dpkg-query -W '{}*' 2>&1 | head -5", shell_escape(package));
     if let Ok(wildcard_output) = vm.ssh_exec(username, &wildcard_cmd).await
-        && !wildcard_output.is_empty() && !wildcard_output.contains("no packages found") {
-            let _ = write!(
-                raw_output,
-                "\nInstalled packages matching {}*:\n{}\n",
-                package,
-                wildcard_output
-            );
-        }
-    
+        && !wildcard_output.is_empty()
+        && !wildcard_output.contains("no packages found")
+    {
+        let _ = write!(
+            raw_output,
+            "\nInstalled packages matching {}*:\n{}\n",
+            package, wildcard_output
+        );
+    }
+
     // Get general package search results
     let search_cmd = format!("apt-cache search {} | head -5 2>&1", shell_escape(package));
     if let Ok(search_output) = vm.ssh_exec(username, &search_cmd).await
-        && !search_output.is_empty() {
-            let _ = write!(raw_output, "\nSimilar packages:\n{}\n", search_output);
-        }
-    
+        && !search_output.is_empty()
+    {
+        let _ = write!(raw_output, "\nSimilar packages:\n{}\n", search_output);
+    }
+
     Ok(PackageDetails {
         actual_name: None,
         version: None,
@@ -459,11 +467,8 @@ pub async fn verify_installation(vm: &VmHandle, manifest: &Manifest) -> Result<V
     let mut checks = Vec::new();
 
     // Get the username from manifest (first user, or default to "ubuntu")
-    let username = manifest
-        .users
-        .first()
-        .map_or("ubuntu", |u| u.name.as_str());
-    
+    let username = manifest.users.first().map_or("ubuntu", |u| u.name.as_str());
+
     info!("Using SSH user: {}", username);
 
     // 1. Verify packages are installed
@@ -498,7 +503,11 @@ pub async fn verify_installation(vm: &VmHandle, manifest: &Manifest) -> Result<V
 /// Verify packages are installed
 ///
 /// **Evolution #23**: Uses robust multi-method verification to eliminate false negatives
-async fn verify_packages(vm: &VmHandle, manifest: &Manifest, username: &str) -> Result<Vec<VerificationCheck>> {
+async fn verify_packages(
+    vm: &VmHandle,
+    manifest: &Manifest,
+    username: &str,
+) -> Result<Vec<VerificationCheck>> {
     let mut checks = Vec::new();
 
     // Get packages from build steps
@@ -532,14 +541,16 @@ async fn verify_packages(vm: &VmHandle, manifest: &Manifest, username: &str) -> 
                         VerificationMethod::InstalledByDependency(ref dep) => {
                             Some(format!("Installed as dependency of {}", dep))
                         }
-                        _ => {
-                            result.details.version.as_ref().map(|v| format!("Version: {}", v))
-                        }
+                        _ => result
+                            .details
+                            .version
+                            .as_ref()
+                            .map(|v| format!("Version: {}", v)),
                     }
                 } else {
                     // Failure: Show comprehensive diagnostics
                     let mut msg = String::from("Not installed. ");
-                    
+
                     if !result.details.alternatives_checked.is_empty() {
                         let _ = write!(
                             msg,
@@ -547,15 +558,16 @@ async fn verify_packages(vm: &VmHandle, manifest: &Manifest, username: &str) -> 
                             result.details.alternatives_checked.join(", ")
                         );
                     }
-                    
+
                     if let Some(ref raw) = result.details.raw_output
-                        && !raw.is_empty() {
-                            // Include first line of diagnostics
-                            if let Some(first_line) = raw.lines().next() {
-                                let _ = write!(msg, "Info: {}", first_line.trim());
-                            }
+                        && !raw.is_empty()
+                    {
+                        // Include first line of diagnostics
+                        if let Some(first_line) = raw.lines().next() {
+                            let _ = write!(msg, "Info: {}", first_line.trim());
                         }
-                    
+                    }
+
                     Some(msg)
                 };
 
@@ -581,7 +593,11 @@ async fn verify_packages(vm: &VmHandle, manifest: &Manifest, username: &str) -> 
 }
 
 /// Verify commands executed successfully
-async fn verify_commands(vm: &VmHandle, manifest: &Manifest, username: &str) -> Result<Vec<VerificationCheck>> {
+async fn verify_commands(
+    vm: &VmHandle,
+    manifest: &Manifest,
+    username: &str,
+) -> Result<Vec<VerificationCheck>> {
     let mut checks = Vec::new();
 
     debug!("Verifying command execution results");
@@ -592,7 +608,10 @@ async fn verify_commands(vm: &VmHandle, manifest: &Manifest, username: &str) -> 
             "Cloud-init complete".to_string(),
             "test -f /var/lib/cloud/instance/boot-finished".to_string(),
         ),
-        ("User home exists".to_string(), format!("test -d /home/{}", username)),
+        (
+            "User home exists".to_string(),
+            format!("test -d /home/{}", username),
+        ),
         (
             "SSH authorized_keys".to_string(),
             format!("test -f /home/{}/.ssh/authorized_keys", username),

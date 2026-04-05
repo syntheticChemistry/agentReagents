@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 // agentReagents Image Builder
 // Modern idiomatic Rust implementation replacing bash scripts
 
@@ -21,9 +21,9 @@ pub use verification::VerificationResult;
 pub use vm_handle::{CloudInitStatusInfo, VmHandle};
 
 use crate::templates::TemplateManifest;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
-use tokio::time::{sleep, timeout, Duration};
+use tokio::time::{Duration, sleep, timeout};
 use tracing::{debug, error, info, instrument, warn};
 // Serialization handled by sub-modules
 
@@ -128,7 +128,7 @@ impl ImageBuilder {
             .create_builder_vm(cloud_init)
             .await
             .context("Failed to create builder VM")?;
-        
+
         // VmGuard will clean up VM if we return early (panic, timeout, error)
         // We'll preserve it explicitly at the end if build succeeds
 
@@ -181,7 +181,7 @@ impl ImageBuilder {
 
         let build_duration = start_time.elapsed();
         info!("Build completed in {:?}", build_duration);
-        
+
         // Build succeeded - preserve the VM (prevent cleanup)
         vm_guard.preserve();
         info!("✅ VM preserved (cleanup disabled)");
@@ -201,7 +201,7 @@ impl ImageBuilder {
     }
 
     /// Phase 1A: Extract common pattern - get username with observability
-    /// 
+    ///
     /// Returns the username from the manifest, with proper logging:
     /// - If manifest has users: Returns first user's name  
     /// - If no users: Returns "ubuntu" with warning (may fail on non-Ubuntu systems)

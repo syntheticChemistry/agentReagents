@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Integration tests for agentReagents
 //!
 //! These tests verify the integration between components
@@ -44,8 +44,7 @@ fn test_template_manifest_validation() {
 #[test]
 fn test_template_registry_creation() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let registry =
-        TemplateRegistry::new(temp_dir.path()).expect("Failed to create registry");
+    let registry = TemplateRegistry::new(temp_dir.path()).expect("Failed to create registry");
 
     let templates = registry.list_templates();
     assert_eq!(templates.len(), 0);

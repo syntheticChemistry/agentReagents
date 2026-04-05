@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Image management and discovery
 
 use anyhow::{Context, Result};
@@ -87,24 +87,25 @@ impl ImageManager {
             let path = entry.path();
 
             if path.is_file()
-                && let Some(extension) = path.extension() {
-                    let ext = extension.to_string_lossy();
-                    if ext == "img" || ext == "qcow2" || ext == "iso" {
-                        let metadata = tokio::fs::metadata(&path).await?;
-                        let name = path
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("unknown")
-                            .to_string();
+                && let Some(extension) = path.extension()
+            {
+                let ext = extension.to_string_lossy();
+                if ext == "img" || ext == "qcow2" || ext == "iso" {
+                    let metadata = tokio::fs::metadata(&path).await?;
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
 
-                        images.push(Image {
-                            name,
-                            path,
-                            image_type: image_type.clone(),
-                            size_bytes: metadata.len(),
-                        });
-                    }
+                    images.push(Image {
+                        name,
+                        path,
+                        image_type: image_type.clone(),
+                        size_bytes: metadata.len(),
+                    });
                 }
+            }
         }
 
         Ok(images)

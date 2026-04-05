@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Template manifest definitions
 //!
 //! Defines the structure for template manifests that describe
@@ -386,7 +386,7 @@ mod tests {
                 required_files: vec![],
                 verification_commands: vec![],
             },
-            metadata: Default::default(),
+            metadata: HashMap::default(),
             created: None,
             checksum: None,
         };

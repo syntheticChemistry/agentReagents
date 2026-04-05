@@ -1,11 +1,11 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Post-Boot Step Executor
 //!
 //! Executes steps via SSH after cloud-init completes.
 //! This is the "add heat-sensitive compounds after cooling" phase.
 
 use crate::builder::vm_handle::VmHandle;
-use crate::builder::vm_reboot::{execute_reboot, RebootConfig};
+use crate::builder::vm_reboot::{RebootConfig, execute_reboot};
 use crate::templates::PostBootStep;
 use anyhow::{Context, Result};
 use std::time::Duration;
@@ -33,7 +33,13 @@ pub async fn execute_post_boot_steps(
         info!("  Step {}/{}: {:?}", idx + 1, steps.len(), step);
         execute_post_boot_step(vm, step, username)
             .await
-            .with_context(|| format!("Failed to execute post-boot step {}/{}", idx + 1, steps.len()))?;
+            .with_context(|| {
+                format!(
+                    "Failed to execute post-boot step {}/{}",
+                    idx + 1,
+                    steps.len()
+                )
+            })?;
     }
 
     info!("✅ All post-boot steps completed successfully");
@@ -41,6 +47,7 @@ pub async fn execute_post_boot_steps(
 }
 
 /// Execute a single post-boot step
+#[allow(clippy::too_many_lines)]
 async fn execute_post_boot_step(vm: &VmHandle, step: &PostBootStep, username: &str) -> Result<()> {
     match step {
         PostBootStep::InstallPackages {
@@ -52,8 +59,16 @@ async fn execute_post_boot_step(vm: &VmHandle, step: &PostBootStep, username: &s
             if let Some(desc) = description {
                 info!("  📦 {}", desc);
             }
-            info!("     Installing {} packages (timeout: {}s)...", packages.len(), timeout_secs);
-            println!("📦 Installing {} packages: {}", packages.len(), packages.join(", "));
+            info!(
+                "     Installing {} packages (timeout: {}s)...",
+                packages.len(),
+                timeout_secs
+            );
+            println!(
+                "📦 Installing {} packages: {}",
+                packages.len(),
+                packages.join(", ")
+            );
 
             // Use monitored install for better visibility
             let result = if *retry {
@@ -150,7 +165,7 @@ async fn execute_post_boot_step(vm: &VmHandle, step: &PostBootStep, username: &s
                 stabilization_wait_secs: 10,
                 gather_diagnostics: true,
             };
-            
+
             let _state = execute_reboot(vm, username, &config)
                 .await
                 .context("Failed to complete VM reboot")?;
@@ -184,8 +199,11 @@ async fn execute_apt_install_monitored(
     timeout_secs: u64,
     username: &str,
 ) -> Result<()> {
-    info!("     📊 Starting monitored apt install (timeout: {}s)", timeout_secs);
-    
+    info!(
+        "     📊 Starting monitored apt install (timeout: {}s)",
+        timeout_secs
+    );
+
     // Create unique marker files for this installation
     // Phase 1A: Proper error handling for system time (should never fail, but be explicit)
     let unique_id = std::time::SystemTime::now()
@@ -195,20 +213,23 @@ async fn execute_apt_install_monitored(
     let marker_file = format!("/tmp/apt-progress-{}.log", unique_id);
     let completion_marker = format!("/tmp/apt-complete-{}", unique_id);
     let script_path = format!("/tmp/apt-install-{}.sh", unique_id);
-    let cleanup_cmd = format!("rm -f {} {} {}", marker_file, completion_marker, script_path);
+    let cleanup_cmd = format!(
+        "rm -f {} {} {}",
+        marker_file, completion_marker, script_path
+    );
     let _ = vm.ssh_exec(username, &cleanup_cmd).await;
-    
+
     // Build the apt command with progress logging
     // DEEP DEBT FIX: Simplified, observable command structure
-    // 
+    //
     // MODERN IDIOMATIC APPROACH:
     // 1. Create a simple shell script in /tmp
     // 2. Execute it in background
     // 3. Monitor via completion marker
-    // 
+    //
     // This eliminates the complex nohup/sh/sudo/env nesting
     // and makes debugging trivial
-    
+
     let script_path = format!("/tmp/apt-install-{}.sh", unique_id);
     let script_content = format!(
         r#"#!/bin/bash
@@ -227,41 +248,44 @@ echo "DONE" > {}
         marker_file,
         completion_marker
     );
-    
+
     // Write script to VM
     let write_script_cmd = format!(
         "cat > {} << 'SCRIPT_EOF'\n{}\nSCRIPT_EOF\nchmod +x {}",
         script_path, script_content, script_path
     );
-    
+
     info!("     📝 Creating install script: {}", script_path);
     vm.ssh_exec(username, &write_script_cmd).await?;
-    
+
     // Execute script in background
     let exec_cmd = format!("nohup {} > /dev/null 2>&1 &", script_path);
     info!("     🚀 Launching: apt-get install {}", packages.join(" "));
     vm.ssh_exec(username, &exec_cmd).await?;
-    
+
     // Give the background process time to start
     tokio::time::sleep(Duration::from_secs(2)).await;
-    
+
     // Monitor progress by checking for completion marker
     let start = std::time::Instant::now();
     let duration = Duration::from_secs(timeout_secs);
     let mut last_size = 0u64;
     let mut stall_count = 0;
-    
+
     loop {
         if start.elapsed() > duration {
             anyhow::bail!("apt-get install timed out after {}s", timeout_secs);
         }
-        
+
         tokio::time::sleep(Duration::from_secs(5)).await;
-        
+
         // IDIOMATIC RUST: Explicit error handling with proper logging
         // Check for completion marker with retry for transient SSH issues
-        let check_cmd = format!("test -f {} && echo 'done' || echo 'running'", completion_marker);
-        
+        let check_cmd = format!(
+            "test -f {} && echo 'done' || echo 'running'",
+            completion_marker
+        );
+
         let status = match vm.ssh_exec(username, &check_cmd).await {
             Ok(output) => output,
             Err(e) => {
@@ -272,23 +296,26 @@ echo "DONE" > {}
                 "error".to_string()
             }
         };
-        
+
         let status_trimmed = status.trim();
-        
+
         // OBSERVABILITY: Debug log for troubleshooting
         if status_trimmed != "running" {
-            info!("     🔍 Completion check: status='{}' (expecting 'done')", status_trimmed);
+            info!(
+                "     🔍 Completion check: status='{}' (expecting 'done')",
+                status_trimmed
+            );
         }
-        
+
         if status_trimmed == "done" {
             info!("     ✅ apt-get install completed");
             break;
         }
-        
+
         // Get progress info
         let elapsed = start.elapsed().as_secs();
         let remaining = timeout_secs.saturating_sub(elapsed);
-        
+
         // Check log file size as a proxy for progress
         let size_cmd = format!("stat -c %s {} 2>/dev/null || echo 0", marker_file);
         let size_str = match vm.ssh_exec(username, &size_cmd).await {
@@ -299,13 +326,17 @@ echo "DONE" > {}
             }
         };
         let current_size = size_str.trim().parse::<u64>().unwrap_or(0);
-        
+
         // Check for stall (no new output)
         if current_size == last_size {
             stall_count += 1;
-            if stall_count >= 6 { // 30 seconds of no output
-                warn!("     ⚠️  No progress for 30s - possible stall? ({}s elapsed, {}s remaining)", elapsed, remaining);
-                
+            if stall_count >= 6 {
+                // 30 seconds of no output
+                warn!(
+                    "     ⚠️  No progress for 30s - possible stall? ({}s elapsed, {}s remaining)",
+                    elapsed, remaining
+                );
+
                 // Show last few lines of log
                 let tail_cmd = format!("tail -3 {} 2>/dev/null || echo 'No log yet'", marker_file);
                 if let Ok(tail) = vm.ssh_exec(username, &tail_cmd).await {
@@ -318,8 +349,11 @@ echo "DONE" > {}
         } else {
             stall_count = 0;
             let kb = current_size / 1024;
-            info!("     ⏳ Installing... ({} KB logged, {}s elapsed, {}s remaining)", kb, elapsed, remaining);
-            
+            info!(
+                "     ⏳ Installing... ({} KB logged, {}s elapsed, {}s remaining)",
+                kb, elapsed, remaining
+            );
+
             // Show last line of progress
             let tail_cmd = format!("tail -1 {} 2>/dev/null", marker_file);
             if let Ok(tail) = vm.ssh_exec(username, &tail_cmd).await {
@@ -329,15 +363,18 @@ echo "DONE" > {}
                 }
             }
         }
-        
+
         last_size = current_size;
     }
-    
+
     // Cleanup
     info!("     🧹 Cleaning up install artifacts");
-    let cleanup_cmd = format!("rm -f {} {} {}", marker_file, completion_marker, script_path);
+    let cleanup_cmd = format!(
+        "rm -f {} {} {}",
+        marker_file, completion_marker, script_path
+    );
     let _ = vm.ssh_exec(username, &cleanup_cmd).await;
-    
+
     Ok(())
 }
 
@@ -387,4 +424,3 @@ mod tests {
         assert!(yaml.contains("vim"));
     }
 }
-

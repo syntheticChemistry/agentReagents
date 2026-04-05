@@ -1,10 +1,10 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Template registry for managing templates
 //!
 //! Provides storage and retrieval of template manifests with checksums.
 
-use super::manifest::TemplateManifest;
 use super::TemplateInfo;
+use super::manifest::TemplateManifest;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

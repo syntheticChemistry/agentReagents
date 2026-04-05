@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! agent-reagents CLI tool
 //!
 //! Reproducible VM image management with manifest-driven builds
@@ -386,13 +386,15 @@ async fn cleanup_orphaned_vms() -> Result<()> {
         return Ok(());
     }
 
-    info!("   🔍 Found {} orphaned VM(s), cleaning up...", orphans.len());
+    info!(
+        "   🔍 Found {} orphaned VM(s), cleaning up...",
+        orphans.len()
+    );
 
     // Collect VM names to clean (avoid borrow issues)
     let vm_names: Vec<String> = orphans.iter().map(|e| e.name.clone()).collect();
 
-    let conn = Connect::open(Some("qemu:///system"))
-        .context("Failed to connect to libvirt")?;
+    let conn = Connect::open(Some("qemu:///system")).context("Failed to connect to libvirt")?;
 
     let mut cleaned = 0;
     for vm_name in vm_names {

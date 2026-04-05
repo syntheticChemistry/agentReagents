@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! End-to-end build test
 //!
 //! Tests the full build flow from manifest to template
@@ -91,7 +91,7 @@ async fn test_build_step_executor_unit() -> anyhow::Result<()> {
 
     use agent_reagents::templates::BuildStep;
 
-    let steps = vec![
+    let steps = [
         BuildStep::InstallPackages {
             packages: vec!["vim".to_string(), "curl".to_string()],
         },

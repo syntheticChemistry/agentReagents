@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! JSON-RPC 2.0 server for agentReagents (UniBin compliance).
 //!
 //! Implements newline-delimited JSON-RPC over TCP per
@@ -115,9 +115,7 @@ pub async fn run_server(
         warn!("FAMILY_ID not set and not standalone — degrading to standalone mode");
     }
 
-    let state = Arc::new(ServerState {
-        registry_dir,
-    });
+    let state = Arc::new(ServerState { registry_dir });
 
     loop {
         let (stream, peer) = listener.accept().await?;
@@ -183,19 +181,13 @@ fn dispatch_request(line: &str, state: &ServerState) -> RpcResponse {
         Err(MethodError::InvalidParams(msg)) => {
             RpcResponse::error(id, error_codes::INVALID_PARAMS, msg)
         }
-        Err(MethodError::Internal(msg)) => {
-            RpcResponse::error(id, error_codes::INTERNAL_ERROR, msg)
-        }
+        Err(MethodError::Internal(msg)) => RpcResponse::error(id, error_codes::INTERNAL_ERROR, msg),
     }
 }
 
 type MethodResult = Result<serde_json::Value, MethodError>;
 
-fn dispatch_method(
-    method: &str,
-    params: &serde_json::Value,
-    state: &ServerState,
-) -> MethodResult {
+fn dispatch_method(method: &str, params: &serde_json::Value, state: &ServerState) -> MethodResult {
     match method {
         "health.liveness" => health_liveness(),
         "health.readiness" => health_readiness(state),
@@ -418,6 +410,9 @@ mod tests {
         };
         let resp = dispatch_request("not json", &state);
         assert!(resp.error.is_some());
-        assert_eq!(resp.error.as_ref().expect("err").code, error_codes::PARSE_ERROR);
+        assert_eq!(
+            resp.error.as_ref().expect("err").code,
+            error_codes::PARSE_ERROR
+        );
     }
 }

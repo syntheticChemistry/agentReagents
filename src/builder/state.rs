@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Build state tracking for VM image creation
 //!
 //! Provides a state machine for tracking build progress with network awareness.
@@ -104,10 +104,7 @@ impl BuildState {
 
     /// Check if the build failed
     pub const fn is_failed(&self) -> bool {
-        matches!(
-            self,
-            Self::Failed { .. } | Self::NetworkLost { .. }
-        )
+        matches!(self, Self::Failed { .. } | Self::NetworkLost { .. })
     }
 
     /// Check if the build is complete
@@ -207,18 +204,23 @@ mod tests {
     #[test]
     fn test_state_terminal() {
         assert!(BuildState::Complete.is_terminal());
-        assert!(BuildState::Failed {
-            reason: "test".to_string()
-        }
-        .is_terminal());
-        assert!(BuildState::NetworkLost {
-            reason: "timeout".to_string()
-        }
-        .is_terminal());
+        assert!(
+            BuildState::Failed {
+                reason: "test".to_string()
+            }
+            .is_terminal()
+        );
+        assert!(
+            BuildState::NetworkLost {
+                reason: "timeout".to_string()
+            }
+            .is_terminal()
+        );
         assert!(!BuildState::Starting.is_terminal());
     }
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn test_state_progress() {
         assert_eq!(BuildState::Idle.progress(), 0.0);
         assert_eq!(BuildState::Complete.progress(), 1.0);

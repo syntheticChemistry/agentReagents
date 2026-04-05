@@ -1,22 +1,22 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 
 //! Builder VM creation via libvirt / benchScale (domain, disks, cloud-init attachment).
 
 use anyhow::{Context, Result};
+use benchscale::CloudInit;
+use benchscale::backend::LibvirtBackend;
 use benchscale::backend::libvirt::VmGuard;
 use benchscale::backend::senescence::SenescenceMonitor;
-use benchscale::backend::LibvirtBackend;
 use benchscale::config::{BenchScaleConfig, MonitoringConfig, TimeoutConfig};
-use benchscale::CloudInit;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::time::Duration;
 use tracing::{info, warn};
 
+use super::ImageBuilder;
 use super::network::NetworkMonitor;
 use super::post_boot;
 use super::vm_handle::VmHandle;
-use super::ImageBuilder;
 
 impl ImageBuilder {
     /// Create the builder VM using benchScale with manifest configuration
@@ -124,7 +124,10 @@ impl ImageBuilder {
         // Evolution #22: Extract MAC address for DHCP lease tracking
         let mac_address = node.metadata.get("mac_address").cloned();
         if let Some(ref mac) = mac_address {
-            info!("Evolution #22: MAC address {} will be tracked for IP changes", mac);
+            info!(
+                "Evolution #22: MAC address {} will be tracked for IP changes",
+                mac
+            );
         }
 
         // Phase 2B: Use configuration system for monitoring behavior
@@ -188,7 +191,10 @@ impl ImageBuilder {
                 println!("✅ Cloud-init completed successfully!");
             }
             Err(e) => {
-                warn!("⚠️ Cloud-init monitoring ended: {} (VM may still be usable)", e);
+                warn!(
+                    "⚠️ Cloud-init monitoring ended: {} (VM may still be usable)",
+                    e
+                );
                 println!("⚠️  Cloud-init monitoring ended, but VM appears to be running");
 
                 // Check if VM is at least responsive

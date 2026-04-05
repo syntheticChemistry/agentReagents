@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: AGPL-3.0-only
+// SPDX-License-Identifier: AGPL-3.0-or-later
 //! Build a COSMIC desktop image with verification
 //!
 //! This example demonstrates the modern Rust-based image builder
@@ -6,10 +6,11 @@
 
 use agent_reagents::builder::ImageBuilder;
 use agent_reagents::images::ImageManager;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 
 #[tokio::main]
+#[allow(deprecated)] // `build_cosmic_desktop` retained for this example until `build()` is public
 async fn main() -> Result<()> {
     // Initialize tracing for observability
     tracing_subscriber::fmt().with_env_filter("info").init();
@@ -50,8 +51,12 @@ async fn main() -> Result<()> {
             vcpus: 2,
             disk_gb: 30,
             timeout_secs: 2400,
+            static_ip: None,
         },
+        pci_passthrough: vec![],
+        users: vec![],
         build_steps: vec![],
+        post_boot_steps: vec![],
         verification: VerificationConfig {
             required_packages: vec![],
             required_services: vec![],
