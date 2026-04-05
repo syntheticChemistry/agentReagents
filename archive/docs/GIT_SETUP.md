@@ -7,7 +7,7 @@ This guide shows how to convert the existing agentReagents directory into a git 
 ### 1. Initialize Git Repository
 
 ```bash
-cd /home/nestgate/Development/syntheticChemistry/agentReagents
+cd /path/to/agentReagents
 
 # Initialize git
 git init

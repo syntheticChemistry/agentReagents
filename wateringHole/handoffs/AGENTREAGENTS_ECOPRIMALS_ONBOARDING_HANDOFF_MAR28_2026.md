@@ -26,12 +26,12 @@ Cloud-init config for ecoPrimals gate VMs (benchScale Tier 2 libvirt path):
 
 ## Known Debt
 
-1. **Path references** — README and docs reference `/home/nestgate/Development/syntheticChemistry/agentReagents` instead of current layout under `ecoPrimals/infra/agentReagents`
+1. **Path references** — Historical docs used machine-specific paths; scrubbed to `/path/to/...` placeholders (see archive docs)
 2. **Missing .gitkeep files** — `.gitignore` re-includes `images/**/.gitkeep` but the files don't exist, so empty dirs aren't preserved in clones
 3. **Missing install-deps.sh** — README references `scripts/install-deps.sh` which doesn't exist
 4. **CHANGELOG location** — Only under `docs/CHANGELOG.md`, not at root per ecoPrimals convention
 5. **License file** — No LICENSE file, should match benchScale (MIT OR Apache-2.0)
-6. **docs/CHECKSUMS.md** — Contains paths with `/home/nestgate/` prefix
+6. **docs/CHECKSUMS.md** — Was called out for old paths; file now uses repo-relative paths only
 
 ## Next Steps
 

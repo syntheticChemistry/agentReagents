@@ -397,4 +397,102 @@ mod tests {
         manifest.resources.memory_mb = 256;
         assert!(manifest.validate().is_err());
     }
+
+    #[test]
+    fn validate_rejects_empty_name_version_base_and_resources() {
+        let mut manifest = TemplateManifest {
+            name: String::new(),
+            version: "1.0.0".to_string(),
+            base_image: "x.img".to_string(),
+            description: None,
+            resources: ResourceConfig {
+                memory_mb: 2048,
+                vcpus: 2,
+                disk_gb: 30,
+                timeout_secs: 2400,
+                static_ip: None,
+            },
+            pci_passthrough: vec![],
+            users: vec![],
+            build_steps: vec![],
+            post_boot_steps: vec![],
+            verification: VerificationConfig {
+                required_packages: vec![],
+                required_services: vec![],
+                required_files: vec![],
+                verification_commands: vec![],
+            },
+            metadata: HashMap::default(),
+            created: None,
+            checksum: None,
+        };
+        assert!(manifest.validate().is_err());
+
+        manifest.name = "n".to_string();
+        manifest.version = "bad".to_string();
+        assert!(manifest.validate().is_err());
+
+        manifest.version = "1.0.0".to_string();
+        manifest.base_image = String::new();
+        assert!(manifest.validate().is_err());
+
+        manifest.base_image = "b.img".to_string();
+        manifest.resources.vcpus = 0;
+        assert!(manifest.validate().is_err());
+
+        manifest.resources.vcpus = 1;
+        manifest.resources.disk_gb = 5;
+        assert!(manifest.validate().is_err());
+    }
+
+    #[test]
+    fn yaml_roundtrip_minimal_manifest() {
+        let manifest = TemplateManifest {
+            name: "t".to_string(),
+            version: "2.1.0".to_string(),
+            base_image: "ubuntu.img".to_string(),
+            description: Some("d".to_string()),
+            resources: ResourceConfig {
+                memory_mb: 1024,
+                vcpus: 1,
+                disk_gb: 20,
+                timeout_secs: 100,
+                static_ip: Some("10.0.0.5".to_string()),
+            },
+            pci_passthrough: vec![],
+            users: vec![UserConfig {
+                name: "u".to_string(),
+                password: None,
+                groups: vec!["sudo".to_string()],
+                ssh_authorized_keys: vec![],
+            }],
+            build_steps: vec![BuildStep::WaitCloudInit {
+                timeout_secs: 120,
+            }],
+            post_boot_steps: vec![PostBootStep::RunCommand {
+                command: "true".to_string(),
+                description: None,
+                timeout_secs: 10,
+            }],
+            verification: VerificationConfig {
+                required_packages: vec!["curl".to_string()],
+                required_services: vec![],
+                required_files: vec![],
+                verification_commands: vec![VerificationCommand {
+                    command: "true".to_string(),
+                    expected_exit_code: 0,
+                    description: None,
+                }],
+            },
+            metadata: HashMap::from([("k".to_string(), "v".to_string())]),
+            created: None,
+            checksum: None,
+        };
+        let yaml = serde_yaml::to_string(&manifest).expect("to yaml");
+        let back: TemplateManifest = serde_yaml::from_str(&yaml).expect("from yaml");
+        assert_eq!(back.name, manifest.name);
+        assert_eq!(back.resources.static_ip, manifest.resources.static_ip);
+        assert_eq!(back.build_steps.len(), 1);
+        assert_eq!(back.post_boot_steps.len(), 1);
+    }
 }

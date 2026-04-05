@@ -220,7 +220,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::float_cmp)]
+    #[expect(clippy::float_cmp, reason = "Literal progress bounds in unit tests")]
     fn test_state_progress() {
         assert_eq!(BuildState::Idle.progress(), 0.0);
         assert_eq!(BuildState::Complete.progress(), 1.0);
@@ -253,5 +253,36 @@ mod tests {
         assert!(state.is_failed());
         assert!(!state.is_complete());
         assert!(state.description().contains("Network lost"));
+    }
+
+    #[test]
+    fn build_progress_new_sets_network_flag_and_progress() {
+        let state = BuildState::InstallingCosmic { progress: 0.25 };
+        let mut p = BuildProgress::new(state.clone(), 42);
+        assert_eq!(p.elapsed_secs, 42);
+        assert!(p.description.contains("COSMIC"));
+        assert!((p.progress - state.progress()).abs() < f32::EPSILON);
+        p.set_network_healthy(true);
+        assert!(p.network_healthy);
+    }
+
+    #[test]
+    fn failed_and_idle_flags() {
+        assert!(
+            BuildState::Failed {
+                reason: "x".to_string()
+            }
+            .is_failed()
+        );
+        assert!(!BuildState::Complete.is_failed());
+        assert!(BuildState::Complete.is_complete());
+        assert!(!BuildState::Monitoring.is_complete());
+    }
+
+    #[test]
+    #[expect(clippy::float_cmp, reason = "Literal progress bounds in unit tests")]
+    fn progress_monotonic_phases() {
+        assert_eq!(BuildState::Finalizing.progress(), 0.95);
+        assert_eq!(BuildState::Idle.progress(), 0.0);
     }
 }

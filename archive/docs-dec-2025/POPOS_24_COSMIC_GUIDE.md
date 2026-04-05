@@ -20,7 +20,7 @@ Download **Pop!_OS 24.04 Alpha** (select your hardware):
 - Intel/AMD version
 - NVIDIA version (if you have NVIDIA GPU)
 
-Save to: `/home/nestgate/Development/syntheticChemistry/agentReagents/isos/`
+Save to: `agentReagents/isos/` (under your clone root)
 
 ### Option B: Try Automated Download
 

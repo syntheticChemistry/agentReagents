@@ -313,3 +313,41 @@ impl VmHandle {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::VmHandle;
+
+    #[test]
+    fn filter_ssh_warnings_strips_benign_lines() {
+        let raw = "Warning: Permanently added '10.0.0.1' (ED25519) to the list of known hosts.\n\
+             actual error: permission denied\n";
+        let filtered = VmHandle::filter_ssh_warnings(raw);
+        assert!(filtered.contains("permission denied"));
+        assert!(!filtered.to_lowercase().contains("permanently added"));
+    }
+
+    #[test]
+    fn filter_ssh_warnings_empty_when_only_warnings() {
+        let raw = "Warning: Permanently added host key\n";
+        let filtered = VmHandle::filter_ssh_warnings(raw);
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn filter_ssh_warnings_drops_permanent_variant_and_generic_warning_prefix() {
+        let raw = "Warning: permanent host key for 'x' added\n\
+             real problem: connection refused\n\
+             warning: something else\n";
+        let filtered = VmHandle::filter_ssh_warnings(raw);
+        assert!(filtered.contains("connection refused"));
+        assert!(!filtered.to_lowercase().contains("permanent host"));
+        assert!(!filtered.contains("something else"));
+    }
+
+    #[test]
+    fn filter_ssh_warnings_preserves_non_warning_stderr() {
+        let raw = "Permission denied (publickey).\n";
+        assert_eq!(VmHandle::filter_ssh_warnings(raw), raw.trim_end());
+    }
+}

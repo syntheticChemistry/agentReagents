@@ -183,4 +183,57 @@ mod tests {
         let status: CloudInitStatus = json.into();
         assert!(status.is_error());
     }
+
+    #[test]
+    fn parse_running_detail_matches_stage_heuristics() {
+        // `parse_stage_from_detail` checks substrings in order: init, config, final, then
+        // modules-* — so e.g. "modules-config" matches `config` first.
+        let json = CloudInitStatusJson {
+            status: "running".to_string(),
+            detail: Some("early init local".to_string()),
+            errors: vec![],
+            recoverable_errors: serde_json::Value::Null,
+        };
+        let status: CloudInitStatus = json.into();
+        match status {
+            CloudInitStatus::Running { stage } => assert_eq!(stage, CloudInitStage::Init),
+            _ => panic!("expected Running"),
+        }
+
+        let json2 = CloudInitStatusJson {
+            status: "running".to_string(),
+            detail: Some("no known keywords".to_string()),
+            errors: vec![],
+            recoverable_errors: serde_json::Value::Null,
+        };
+        let st2: CloudInitStatus = json2.into();
+        match st2 {
+            CloudInitStatus::Running { stage } => {
+                assert!(matches!(stage, CloudInitStage::Unknown(_)));
+            }
+            _ => panic!("expected Running"),
+        }
+    }
+
+    #[test]
+    fn parse_unknown_status_string_becomes_error() {
+        let json = CloudInitStatusJson {
+            status: "weird".to_string(),
+            detail: None,
+            errors: vec![],
+            recoverable_errors: serde_json::Value::Null,
+        };
+        let status: CloudInitStatus = json.into();
+        assert!(status.is_error());
+    }
+
+    #[test]
+    fn cloud_init_status_predicates() {
+        assert!(CloudInitStatus::Done.is_done());
+        assert!(!CloudInitStatus::Done.is_running());
+        let err = CloudInitStatus::Error {
+            message: "m".to_string(),
+        };
+        assert!(err.is_error());
+    }
 }

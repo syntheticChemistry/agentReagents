@@ -326,3 +326,161 @@ impl ImageBuilder {
 }
 
 // VmHandle is now provided by vm_handle module
+
+#[cfg(test)]
+mod tests {
+    use super::ImageBuilder;
+    use crate::templates::{
+        BuildStep, PostBootStep, ResourceConfig, TemplateManifest, UserConfig, VerificationConfig,
+    };
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+    fn valid_manifest_with_steps() -> TemplateManifest {
+        TemplateManifest {
+            name: "unit".to_string(),
+            version: "1.0.0".to_string(),
+            base_image: "base.img".to_string(),
+            description: None,
+            resources: ResourceConfig {
+                memory_mb: 2048,
+                vcpus: 2,
+                disk_gb: 30,
+                timeout_secs: 2400,
+                static_ip: None,
+            },
+            pci_passthrough: vec![],
+            users: vec![UserConfig {
+                name: "ubuntu".to_string(),
+                password: None,
+                groups: vec![],
+                ssh_authorized_keys: vec![],
+            }],
+            build_steps: vec![
+                BuildStep::InstallPackages {
+                    packages: vec!["jq".to_string()],
+                },
+                BuildStep::RunCommand {
+                    command: "echo hi".to_string(),
+                    description: Some("say hi".to_string()),
+                },
+                BuildStep::EnableService {
+                    service: "ssh".to_string(),
+                },
+                BuildStep::AddRepository {
+                    name: "ex".to_string(),
+                    url: "https://example.com/ubuntu".to_string(),
+                    key_url: Some("https://example.com/key.asc".to_string()),
+                },
+            ],
+            post_boot_steps: vec![PostBootStep::InstallPackages {
+                packages: vec!["curl".to_string()],
+                retry: false,
+                timeout_secs: 100,
+                description: None,
+            }],
+            verification: VerificationConfig {
+                required_packages: vec![],
+                required_services: vec![],
+                required_files: vec![],
+                verification_commands: vec![],
+            },
+            metadata: HashMap::default(),
+            created: None,
+            checksum: None,
+        }
+    }
+
+    #[test]
+    fn image_builder_from_manifest_timeout_and_accessors() {
+        let m = valid_manifest_with_steps();
+        let b = ImageBuilder::from_manifest(m.clone())
+            .with_timeout(Duration::from_secs(60))
+            .with_plasmid_bin(std::path::PathBuf::from("/opt/plasmid"));
+        assert_eq!(b.name(), "unit");
+        assert_eq!(
+            b.plasmid_bin_path(),
+            Some(&std::path::PathBuf::from("/opt/plasmid"))
+        );
+        assert_eq!(b.manifest().name, "unit");
+        assert_eq!(*b.state(), crate::builder::BuildState::Idle);
+    }
+
+    #[test]
+    fn create_cloud_init_includes_packages_and_runcmd() {
+        let b = ImageBuilder::from_manifest(valid_manifest_with_steps());
+        let ci = b.create_cloud_init("ssh-rsa AAA test".to_string());
+        assert!(
+            ci.packages.contains(&"jq".to_string()) && ci.packages.contains(&"curl".to_string()),
+            "packages: {:?}",
+            ci.packages
+        );
+        let joined = ci.runcmd.join("\n");
+        assert!(
+            joined.contains("echo hi") && joined.contains("systemctl enable ssh"),
+            "runcmd: {}",
+            joined
+        );
+    }
+
+    #[test]
+    fn create_cloud_init_fallback_user_when_manifest_has_no_users() {
+        let mut m = valid_manifest_with_steps();
+        m.users.clear();
+        let b = ImageBuilder::from_manifest(m);
+        let ci = b.create_cloud_init("pk".into());
+        assert!(ci.users.iter().any(|u| u.name == "builder"));
+    }
+
+    #[test]
+    fn create_cloud_init_covers_remaining_build_step_variants() {
+        let _lock = CWD_LOCK.lock().expect("lock");
+        let tmp = tempfile::TempDir::new().expect("tmpdir");
+        let old = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(tmp.path()).expect("chdir");
+        std::fs::create_dir_all("packages").expect("mkdir");
+        std::fs::write("packages/offline.deb", b"d").expect("write");
+
+        let mut m = valid_manifest_with_steps();
+        m.build_steps = vec![
+            BuildStep::WaitCloudInit {
+                timeout_secs: 99,
+            },
+            BuildStep::CreateFile {
+                path: "/etc/ci-test.conf".to_string(),
+                content: "ok\n".to_string(),
+                mode: Some("0644".to_string()),
+            },
+            BuildStep::DownloadFile {
+                url: "https://cdn.example.com/offline.deb".to_string(),
+                dest: "/tmp/offline.deb".to_string(),
+            },
+            BuildStep::DownloadFile {
+                url: "https://remote.only/file.bin".to_string(),
+                dest: "/tmp/remote.bin".to_string(),
+            },
+            BuildStep::AddRepository {
+                name: "plain".to_string(),
+                url: "https://ppa.example.com/ubuntu".to_string(),
+                key_url: None,
+            },
+            BuildStep::Reboot {
+                wait_secs: 1,
+            },
+        ];
+
+        let b = ImageBuilder::from_manifest(m);
+        let ci = b.create_cloud_init("k".into());
+        let joined = ci.runcmd.join("|");
+        assert!(joined.contains("EOFAGENTREAGENTS"));
+        assert!(joined.contains("offline.deb"));
+        assert!(joined.contains("curl -fsSL -o /tmp/remote.bin"));
+        assert!(joined.contains("reboot"));
+        assert!(joined.contains("plain"));
+
+        std::env::set_current_dir(old).expect("restore cwd");
+    }
+}

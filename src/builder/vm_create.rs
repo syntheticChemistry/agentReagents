@@ -25,7 +25,10 @@ impl ImageBuilder {
     /// instead of hardcoded paths and IPs.
     ///
     /// Returns both the VmHandle and a VmGuard for automatic cleanup on failure.
-    #[allow(clippy::too_many_lines)] // VM bring-up: senescence monitor, cloud-init, network, post-boot
+    #[expect(
+        clippy::too_many_lines,
+        reason = "VM bring-up: senescence monitor, cloud-init, network, post-boot"
+    )]
     pub(super) async fn create_builder_vm(
         &self,
         cloud_init: CloudInit,

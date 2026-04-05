@@ -10,7 +10,10 @@ use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 
 #[tokio::main]
-#[allow(deprecated)] // `build_cosmic_desktop` retained for this example until `build()` is public
+#[expect(
+    deprecated,
+    reason = "build_cosmic_desktop retained for this example until build() is public"
+)]
 async fn main() -> Result<()> {
     // Initialize tracing for observability
     tracing_subscriber::fmt().with_env_filter("info").init();

@@ -232,7 +232,45 @@ impl TemplateRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::templates::manifest::{
+        ResourceConfig, TemplateManifest, UserConfig, VerificationConfig,
+    };
+    use std::collections::HashMap;
     use tempfile::TempDir;
+
+    fn minimal_manifest(name: &str) -> TemplateManifest {
+        TemplateManifest {
+            name: name.to_string(),
+            version: "1.0.0".to_string(),
+            base_image: "ubuntu.img".to_string(),
+            description: None,
+            resources: ResourceConfig {
+                memory_mb: 2048,
+                vcpus: 2,
+                disk_gb: 30,
+                timeout_secs: 2400,
+                static_ip: None,
+            },
+            pci_passthrough: vec![],
+            users: vec![UserConfig {
+                name: "ubuntu".to_string(),
+                password: None,
+                groups: vec![],
+                ssh_authorized_keys: vec![],
+            }],
+            build_steps: vec![],
+            post_boot_steps: vec![],
+            verification: VerificationConfig {
+                required_packages: vec![],
+                required_services: vec![],
+                required_files: vec![],
+                verification_commands: vec![],
+            },
+            metadata: HashMap::default(),
+            created: None,
+            checksum: None,
+        }
+    }
 
     #[test]
     fn test_registry_creation() {
@@ -240,5 +278,74 @@ mod tests {
         let registry = TemplateRegistry::new(temp_dir.path()).unwrap();
 
         assert_eq!(registry.list_templates().len(), 0);
+    }
+
+    #[test]
+    fn register_get_manifest_verify_delete_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+        let img = temp_dir.path().join("in.qcow2");
+        std::fs::write(&img, b"fake-disk").unwrap();
+
+        let mut registry = TemplateRegistry::new(temp_dir.path()).unwrap();
+        let manifest = minimal_manifest("demo-template");
+
+        registry
+            .register_template(&manifest, &img)
+            .expect("register");
+
+        assert!(registry.has_template("demo-template"));
+        let info = registry.get_template("demo-template").expect("get");
+        assert_eq!(info.name, "demo-template");
+        assert_eq!(info.version, "1.0.0");
+        assert!(info.path.ends_with("demo-template.qcow2"));
+
+        let loaded = registry.get_manifest("demo-template").expect("manifest");
+        assert_eq!(loaded.name, manifest.name);
+
+        assert!(registry.verify_template("demo-template").expect("verify"));
+
+        registry.delete_template("demo-template").expect("delete");
+        assert!(!registry.has_template("demo-template"));
+    }
+
+    #[test]
+    fn register_duplicate_returns_already_exists() {
+        let temp_dir = TempDir::new().unwrap();
+        let img = temp_dir.path().join("in.qcow2");
+        std::fs::write(&img, b"x").unwrap();
+
+        let mut registry = TemplateRegistry::new(temp_dir.path()).unwrap();
+        let manifest = minimal_manifest("dup");
+        registry.register_template(&manifest, &img).unwrap();
+
+        let err = registry
+            .register_template(&manifest, &img)
+            .expect_err("dup");
+        assert!(err.to_string().contains("already exists") || err.to_string().contains("AlreadyExists"));
+    }
+
+    #[test]
+    fn get_template_not_found_maps_to_registry_error() {
+        let temp_dir = TempDir::new().unwrap();
+        let registry = TemplateRegistry::new(temp_dir.path()).unwrap();
+        let err = registry.get_template("nope").unwrap_err();
+        assert!(matches!(err, RegistryError::NotFound(_)));
+    }
+
+    #[test]
+    fn verify_template_fails_when_file_removed() {
+        let temp_dir = TempDir::new().unwrap();
+        let img = temp_dir.path().join("in.qcow2");
+        std::fs::write(&img, b"x").unwrap();
+
+        let mut registry = TemplateRegistry::new(temp_dir.path()).unwrap();
+        let manifest = minimal_manifest("gone");
+        registry.register_template(&manifest, &img).unwrap();
+
+        let path = temp_dir.path().join("templates/gone.qcow2");
+        std::fs::remove_file(path).unwrap();
+
+        let r = registry.verify_template("gone");
+        assert!(r.is_err());
     }
 }

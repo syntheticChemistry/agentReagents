@@ -72,7 +72,7 @@ echo $WAYLAND_DISPLAY
 From your host machine:
 
 ```bash
-cd /home/nestgate/Development/syntheticChemistry/agentReagents
+cd /path/to/agentReagents
 ./scripts/configure-popos-24-template.sh
 ```
 

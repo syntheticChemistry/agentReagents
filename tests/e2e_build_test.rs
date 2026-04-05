@@ -29,7 +29,10 @@ async fn test_full_ubuntu_build() -> anyhow::Result<()> {
     let mut builder = ImageBuilder::from_manifest(manifest);
 
     // Execute build
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "build_cosmic_desktop until manifest build API is default in tests"
+    )]
     let result = builder.build_cosmic_desktop(ssh_key).await?;
 
     // Verify result
@@ -66,7 +69,10 @@ async fn test_full_popos_cosmic_build() -> anyhow::Result<()> {
     let mut builder = ImageBuilder::from_manifest(manifest);
 
     // Execute build
-    #[allow(deprecated)]
+    #[expect(
+        deprecated,
+        reason = "build_cosmic_desktop until manifest build API is default in tests"
+    )]
     let result = builder.build_cosmic_desktop(ssh_key).await?;
 
     // Verify result

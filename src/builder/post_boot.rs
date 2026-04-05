@@ -47,7 +47,7 @@ pub async fn execute_post_boot_steps(
 }
 
 /// Execute a single post-boot step
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines, reason = "Large match on PostBootStep variants and SSH paths")]
 async fn execute_post_boot_step(vm: &VmHandle, step: &PostBootStep, username: &str) -> Result<()> {
     match step {
         PostBootStep::InstallPackages {
@@ -422,5 +422,49 @@ mod tests {
         let yaml = serde_yaml::to_string(&step).unwrap();
         assert!(yaml.contains("install_packages"));
         assert!(yaml.contains("vim"));
+    }
+
+    #[test]
+    fn post_boot_reboot_and_create_file_roundtrip() {
+        let reboot = PostBootStep::Reboot { wait_secs: 30 };
+        let y = serde_yaml::to_string(&reboot).unwrap();
+        let back: PostBootStep = serde_yaml::from_str(&y).unwrap();
+        assert!(matches!(back, PostBootStep::Reboot { wait_secs: 30 }));
+
+        let cf = PostBootStep::CreateFile {
+            path: "/etc/foo.conf".to_string(),
+            content: "x=1\n".to_string(),
+            mode: "0640".to_string(),
+            owner: Some("root:root".to_string()),
+        };
+        let y2 = serde_yaml::to_string(&cf).unwrap();
+        assert!(y2.contains("create_file"));
+    }
+
+    #[test]
+    fn post_boot_run_command_enable_copy_roundtrip() {
+        let steps = vec![
+            PostBootStep::RunCommand {
+                command: "systemctl daemon-reload".to_string(),
+                description: Some("reload".to_string()),
+                timeout_secs: 120,
+            },
+            PostBootStep::EnableService {
+                service: "nginx".to_string(),
+                start: true,
+            },
+            PostBootStep::CopyFile {
+                source: "/host/a".to_string(),
+                destination: "/guest/a".to_string(),
+                mode: "0644".to_string(),
+            },
+        ];
+        let yaml = serde_yaml::to_string(&steps).expect("to yaml");
+        let back: Vec<PostBootStep> = serde_yaml::from_str(&yaml).expect("from yaml");
+        assert_eq!(back.len(), 3);
+        assert!(matches!(
+            &back[1],
+            PostBootStep::EnableService { service, start: true } if service == "nginx"
+        ));
     }
 }

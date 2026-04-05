@@ -1,6 +1,6 @@
 # ✅ agentReagents Setup Complete!
 **Date:** December 29, 2025  
-**Location:** `/home/flockgate/Developemt/syntheticChemistry/agentReagents`
+**Location:** `/path/to/agentReagents` (example; use your clone root)
 
 ---
 
@@ -129,14 +129,14 @@ sudo ./scripts/build-rustdesk-template.sh
 ### Option 1: Build Templates Now
 Choose one of the build scripts above and run it:
 ```bash
-cd /home/flockgate/Developemt/syntheticChemistry/agentReagents
+cd /path/to/agentReagents
 sudo ./scripts/build-cosmic-cloud-automated.sh
 ```
 
 ### Option 2: Run Validation First
 Test the ionChannel validation system:
 ```bash
-cd /home/flockgate/Developemt/syntheticChemistry/ionChannel
+cd /path/to/ionChannel
 # Note: Some validation binaries need tokio features enabled
 cargo build --release --lib
 ```
@@ -144,7 +144,7 @@ cargo build --release --lib
 ### Option 3: Deploy with benchScale
 Use benchScale to orchestrate VMs:
 ```bash
-cd /home/flockgate/Developemt/syntheticChemistry/benchScale
+cd /path/to/benchScale
 cargo run --features libvirt
 ```
 

@@ -16,6 +16,46 @@ use tracing::{error, info, warn};
 
 use crate::templates::{TemplateManifest, TemplateRegistry};
 
+/// Settings for capability-based registration with a Unix-socket service registry.
+///
+/// The server does **not** embed a specific broker or product name. Callers supply the logical
+/// [`service_name`](Self::service_name) and the socket path (via [`Self::with_default_socket`]
+/// and `REGISTRY_SOCKET`). Deployment manifests or the CLI own defaults such as `"agent-reagents"`.
+///
+/// **Capability-based pattern:** registration is driven by *where* to connect (`registry_socket`)
+/// and *what* is being offered (`service_name`), not by hardcoding a particular ecosystem daemon.
+#[derive(Debug, Clone)]
+pub struct RegistrationSettings {
+    /// Unix domain socket path for the registry (e.g. from `REGISTRY_SOCKET`).
+    pub registry_socket: PathBuf,
+    /// Logical name this instance registers under (from caller, systemd, or orchestration).
+    pub service_name: String,
+}
+
+impl RegistrationSettings {
+    /// Creates settings with an explicit socket path and service name from the caller.
+    #[must_use]
+    pub fn new(registry_socket: PathBuf, service_name: String) -> Self {
+        Self {
+            registry_socket,
+            service_name,
+        }
+    }
+
+    /// Uses `REGISTRY_SOCKET` if set, otherwise `/run/ecoPrimals/registry.sock`.
+    /// `service_name` must be supplied by the caller (CLI, config, or tests).
+    #[must_use]
+    pub fn with_default_socket(service_name: String) -> Self {
+        let registry_socket = std::env::var("REGISTRY_SOCKET")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("/run/ecoPrimals/registry.sock"));
+        Self {
+            registry_socket,
+            service_name,
+        }
+    }
+}
+
 /// Standard JSON-RPC 2.0 error codes.
 mod error_codes {
     pub const PARSE_ERROR: i64 = -32700;
@@ -99,20 +139,31 @@ struct ServerState {
 ///
 /// Binds TCP on `addr`, accepts newline-delimited JSON-RPC 2.0.
 /// `registry_dir` is where templates are stored.
+/// `registration` supplies the registry socket path and service name when the process is not in
+/// standalone mode; see [`RegistrationSettings`].
 pub async fn run_server(
     addr: SocketAddr,
     registry_dir: PathBuf,
     standalone: bool,
+    registration: RegistrationSettings,
 ) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     info!("agentReagents JSON-RPC server listening on {addr}");
 
     if standalone {
-        info!("running in standalone mode (no Songbird registration)");
+        info!("running in standalone mode (no registry registration)");
     } else if let Ok(family_id) = std::env::var("FAMILY_ID") {
-        info!("FAMILY_ID={family_id} — Songbird registration not yet implemented");
+        info!(
+            "FAMILY_ID={family_id} — registry registration not yet implemented (socket={}, service={})",
+            registration.registry_socket.display(),
+            registration.service_name,
+        );
     } else {
-        warn!("FAMILY_ID not set and not standalone — degrading to standalone mode");
+        warn!(
+            "FAMILY_ID not set and not standalone — degrading to standalone mode (would use socket={}, service={})",
+            registration.registry_socket.display(),
+            registration.service_name,
+        );
     }
 
     let state = Arc::new(ServerState { registry_dir });
@@ -207,7 +258,7 @@ fn dispatch_method(method: &str, params: &serde_json::Value, state: &ServerState
 // health.*
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::unnecessary_wraps)]
+#[expect(clippy::unnecessary_wraps, reason = "Uniform MethodResult for JSON-RPC handler table")]
 fn health_liveness() -> MethodResult {
     Ok(serde_json::json!({
         "status": "alive",
@@ -216,7 +267,7 @@ fn health_liveness() -> MethodResult {
     }))
 }
 
-#[allow(clippy::unnecessary_wraps)]
+#[expect(clippy::unnecessary_wraps, reason = "Uniform MethodResult for JSON-RPC handler table")]
 fn health_readiness(state: &ServerState) -> MethodResult {
     let registry_exists = state.registry_dir.exists();
     Ok(serde_json::json!({
@@ -225,7 +276,7 @@ fn health_readiness(state: &ServerState) -> MethodResult {
     }))
 }
 
-#[allow(clippy::unnecessary_wraps)]
+#[expect(clippy::unnecessary_wraps, reason = "Uniform MethodResult for JSON-RPC handler table")]
 fn health_check(state: &ServerState) -> MethodResult {
     let registry_ok = TemplateRegistry::new(&state.registry_dir).is_ok();
     let template_count = TemplateRegistry::new(&state.registry_dir)
@@ -414,5 +465,217 @@ mod tests {
             resp.error.as_ref().expect("err").code,
             error_codes::PARSE_ERROR
         );
+    }
+
+    #[test]
+    fn test_dispatch_invalid_jsonrpc_version() {
+        let state = ServerState {
+            registry_dir: PathBuf::from("/nonexistent"),
+        };
+        let line = r#"{"jsonrpc":"1.0","method":"health.liveness","params":{},"id":1}"#;
+        let resp = dispatch_request(line, &state);
+        assert!(resp.error.is_some());
+        assert_eq!(
+            resp.error.as_ref().expect("err").code,
+            error_codes::INVALID_REQUEST
+        );
+    }
+
+    #[test]
+    fn template_validate_nonexistent_path_returns_valid_false() {
+        let r = template_validate(&serde_json::json!({ "path": "/no/such/file.yaml" }));
+        let v = r.expect("ok result");
+        assert_eq!(v["valid"], false);
+        assert!(v["error"].as_str().unwrap().contains("not found"));
+    }
+
+    #[test]
+    fn template_validate_valid_manifest_via_temp_file() {
+        let tmp = tempfile::TempDir::new().expect("tmpdir");
+        let path = tmp.path().join("m.yaml");
+        let yaml = r#"
+name: demo
+version: 1.0.0
+base_image: /tmp/x.img
+resources:
+  memory_mb: 2048
+  vcpus: 2
+  disk_gb: 30
+build_steps: []
+verification: {}
+"#;
+        std::fs::write(&path, yaml).expect("write");
+
+        let r = template_validate(&serde_json::json!({ "path": path.to_str().unwrap() }));
+        let v = r.expect("ok");
+        assert_eq!(v["valid"], true);
+        assert_eq!(v["name"], "demo");
+    }
+
+    #[test]
+    fn registry_list_and_image_list_with_temp_registry() {
+        let tmp = tempfile::TempDir::new().expect("tmpdir");
+        let state = ServerState {
+            registry_dir: tmp.path().to_path_buf(),
+        };
+        let reg = dispatch_method("registry.list", &serde_json::json!({}), &state)
+            .expect("registry");
+        assert_eq!(reg["templates"], serde_json::json!([]));
+
+        let templates_dir = tmp.path().join("templates");
+        std::fs::create_dir_all(&templates_dir).expect("mkdir");
+        std::fs::write(templates_dir.join("a.qcow2"), b"x").expect("img");
+
+        let imgs = dispatch_method("image.list", &serde_json::json!({}), &state).expect("images");
+        assert_eq!(imgs["images"].as_array().expect("arr").len(), 1);
+    }
+
+    #[test]
+    fn health_check_degraded_when_registry_unusable() {
+        let state = ServerState {
+            registry_dir: PathBuf::from("/nonexistent/path/that/does/not/exist/reagents"),
+        };
+        let h = health_check(&state).expect("health");
+        assert_eq!(h["status"], "degraded");
+    }
+
+    #[test]
+    fn health_check_healthy_when_registry_initializes() {
+        let tmp = tempfile::TempDir::new().expect("tmpdir");
+        let state = ServerState {
+            registry_dir: tmp.path().to_path_buf(),
+        };
+        let h = health_check(&state).expect("health");
+        assert_eq!(h["status"], "healthy");
+        assert_eq!(h["registry"], true);
+        assert_eq!(h["templates"], 0);
+    }
+
+    #[test]
+    fn readiness_not_ready_when_registry_dir_missing() {
+        let state = ServerState {
+            registry_dir: PathBuf::from("/this/path/should/not/exist/agent-reagents-readiness"),
+        };
+        let r = health_readiness(&state).expect("readiness");
+        assert_eq!(r["status"], "not_ready");
+    }
+
+    #[test]
+    fn dispatch_request_method_not_found_envelope() {
+        let tmp = tempfile::TempDir::new().expect("tmpdir");
+        let state = ServerState {
+            registry_dir: tmp.path().to_path_buf(),
+        };
+        let line = r#"{"jsonrpc":"2.0","method":"no.such.method","params":{},"id":99}"#;
+        let resp = dispatch_request(line, &state);
+        let err = resp.error.expect("error");
+        assert_eq!(err.code, error_codes::METHOD_NOT_FOUND);
+        assert!(err.message.contains("no.such.method"));
+    }
+
+    #[test]
+    fn template_validate_parse_error_in_file() {
+        let tmp = tempfile::TempDir::new().expect("tmpdir");
+        let path = tmp.path().join("broken.yaml");
+        std::fs::write(&path, "this is not: [[[[ valid yaml").expect("write");
+        let r = template_validate(&serde_json::json!({ "path": path.to_str().unwrap() }))
+            .expect("result");
+        assert_eq!(r["valid"], false);
+        let err = r["error"].as_str().expect("err str");
+        assert!(
+            err.contains("parse") || err.contains("YAML") || err.contains("yaml"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn template_validate_manifest_validation_failure() {
+        let tmp = tempfile::TempDir::new().expect("tmpdir");
+        let path = tmp.path().join("low_mem.yaml");
+        let yaml = r#"
+name: demo
+version: 1.0.0
+base_image: /tmp/x.img
+resources:
+  memory_mb: 256
+  vcpus: 1
+  disk_gb: 30
+build_steps: []
+verification: {}
+"#;
+        std::fs::write(&path, yaml).expect("write");
+        let r = template_validate(&serde_json::json!({ "path": path.to_str().unwrap() }))
+            .expect("result");
+        assert_eq!(r["valid"], false);
+        let err = r["error"].as_str().expect("err");
+        assert!(err.contains("512") || err.contains("Memory"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn tcp_server_accepts_line_delimited_jsonrpc() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::TcpListener;
+
+        let tmp = tempfile::TempDir::new().expect("tmpdir");
+        let registry = tmp.path().to_path_buf();
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        drop(listener);
+
+        let reg = registry.clone();
+        let server = tokio::spawn(async move {
+            run_server(
+                addr,
+                reg,
+                true,
+                RegistrationSettings::new(
+                    PathBuf::from("/run/ecoPrimals/registry.sock"),
+                    "test".into(),
+                ),
+            )
+            .await
+        });
+
+        let mut ok = false;
+        for _ in 0..80 {
+            if tokio::net::TcpStream::connect(addr).await.is_ok() {
+                ok = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        assert!(ok, "server did not accept connections on {addr}");
+
+        let mut stream = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("connect");
+        let req = r#"{"jsonrpc":"2.0","method":"health.liveness","params":{},"id":42}"#;
+        stream.write_all(req.as_bytes()).await.expect("write");
+        stream.write_all(b"\n").await.expect("newline");
+        stream.write_all(b"\n").await.expect("blank line");
+        stream
+            .write_all(
+                br#"{"jsonrpc":"2.0","method":"health.readiness","params":{},"id":43}"#,
+            )
+            .await
+            .expect("write2");
+        stream.write_all(b"\n").await.expect("newline2");
+
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        reader.read_line(&mut line).await.expect("read1");
+        let v: serde_json::Value = serde_json::from_str(line.trim()).expect("json1");
+        assert_eq!(v["jsonrpc"], "2.0");
+        assert_eq!(v["id"], 42);
+        assert_eq!(v["result"]["status"], "alive");
+
+        line.clear();
+        reader.read_line(&mut line).await.expect("read2");
+        let v2: serde_json::Value = serde_json::from_str(line.trim()).expect("json2");
+        assert_eq!(v2["id"], 43);
+        assert_eq!(v2["result"]["status"], "ready");
+
+        server.abort();
     }
 }

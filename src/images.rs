@@ -115,10 +115,67 @@ impl ImageManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn test_image_type() {
         assert_eq!(ImageType::Cloud, ImageType::Cloud);
         assert_ne!(ImageType::Cloud, ImageType::Iso);
+    }
+
+    #[tokio::test]
+    async fn list_cloud_images_empty_when_dir_missing() {
+        let tmp = TempDir::new().expect("tmpdir");
+        let mgr = ImageManager::new(tmp.path());
+        let imgs = mgr.list_cloud_images().await.expect("list");
+        assert!(imgs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_cloud_images_finds_img_qcow2_iso() {
+        let tmp = TempDir::new().expect("tmpdir");
+        let cloud = tmp.path().join("images/cloud");
+        tokio::fs::create_dir_all(&cloud).await.expect("mkdir");
+        tokio::fs::write(cloud.join("base.img"), b"x").await.expect("write");
+        tokio::fs::write(cloud.join("other.qcow2"), b"yy").await.expect("write");
+        tokio::fs::write(cloud.join("live.iso"), b"z").await.expect("write");
+        tokio::fs::write(cloud.join("readme.txt"), b"nope").await.expect("write");
+
+        let mgr = ImageManager::new(tmp.path());
+        let mut imgs = mgr.list_cloud_images().await.expect("list");
+        imgs.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(imgs.len(), 3);
+        assert_eq!(imgs[0].name, "base.img");
+        assert_eq!(imgs[0].image_type, ImageType::Cloud);
+        assert_eq!(imgs[0].size_bytes, 1);
+        assert_eq!(imgs[1].name, "live.iso");
+        assert_eq!(imgs[2].name, "other.qcow2");
+    }
+
+    #[tokio::test]
+    async fn list_iso_and_templates_and_find() {
+        let tmp = TempDir::new().expect("tmpdir");
+        let isos = tmp.path().join("isos");
+        let templates = tmp.path().join("images/templates");
+        tokio::fs::create_dir_all(&isos).await.expect("mkdir");
+        tokio::fs::create_dir_all(&templates).await.expect("mkdir");
+        tokio::fs::write(isos.join("install.iso"), b"i").await.expect("write");
+        tokio::fs::write(templates.join("tmpl.qcow2"), b"q").await.expect("write");
+
+        let mgr = ImageManager::new(tmp.path());
+        let iso = mgr.list_iso_images().await.expect("isos");
+        assert_eq!(iso.len(), 1);
+        assert_eq!(iso[0].image_type, ImageType::Iso);
+
+        let t = mgr.list_templates().await.expect("tmpl");
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].image_type, ImageType::Template);
+
+        let found = mgr
+            .find_cloud_image("missing")
+            .await
+            .expect("find")
+            .is_none();
+        assert!(found);
     }
 }

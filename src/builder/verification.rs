@@ -863,4 +863,83 @@ mod tests {
         assert!(details.alternatives_checked.is_empty());
         assert!(details.raw_output.is_none());
     }
+
+    #[test]
+    fn verification_result_empty_and_summary() {
+        let empty = VerificationResult::from_checks(vec![]);
+        assert_eq!(empty.total, 0);
+        assert!(empty.passed);
+        assert!(empty.summary().contains("0 checks"));
+
+        let all_fail = VerificationResult::from_checks(vec![VerificationCheck {
+            name: "a".to_string(),
+            passed: false,
+            details: Some("nope".to_string()),
+        }]);
+        assert!(!all_fail.passed);
+        assert!(all_fail.summary().contains("failed"));
+    }
+
+    #[test]
+    fn verification_method_variants_debug() {
+        let m = VerificationMethod::AptCache;
+        let s = format!("{m:?}");
+        assert!(s.contains("AptCache"));
+        let dep = VerificationMethod::InstalledByDependency("pkg".into());
+        assert!(format!("{dep:?}").contains("InstalledByDependency"));
+        assert!(format!("{:?}", VerificationMethod::AllFailed).contains("AllFailed"));
+    }
+
+    #[test]
+    fn verification_result_serde_roundtrip() {
+        let r = VerificationResult::from_checks(vec![
+            VerificationCheck {
+                name: "a".to_string(),
+                passed: true,
+                details: Some("ok".to_string()),
+            },
+            VerificationCheck {
+                name: "b".to_string(),
+                passed: false,
+                details: None,
+            },
+        ]);
+        let json = serde_json::to_string(&r).expect("serialize");
+        let back: VerificationResult = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.total, r.total);
+        assert_eq!(back.passed_count, r.passed_count);
+        assert_eq!(back.failed_count, r.failed_count);
+        assert!(!back.passed);
+    }
+
+    #[test]
+    fn failed_checks_returns_only_failures() {
+        let r = VerificationResult::from_checks(vec![
+            VerificationCheck {
+                name: "ok".to_string(),
+                passed: true,
+                details: None,
+            },
+            VerificationCheck {
+                name: "bad".to_string(),
+                passed: false,
+                details: Some("x".to_string()),
+            },
+        ]);
+        let f = r.failed_checks();
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].name, "bad");
+    }
+
+    #[test]
+    fn summary_all_passed_includes_total() {
+        let r = VerificationResult::from_checks(vec![VerificationCheck {
+            name: "only".to_string(),
+            passed: true,
+            details: None,
+        }]);
+        let s = r.summary();
+        assert!(s.contains('✅'));
+        assert!(s.contains("1 checks"));
+    }
 }

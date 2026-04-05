@@ -1,0 +1,3 @@
+[tarpaulin]
+fail-under = 60.0
+all-features = true

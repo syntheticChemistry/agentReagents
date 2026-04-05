@@ -23,7 +23,7 @@ The script will **automatically**:
 The script needs sudo for libvirt operations. Run:
 
 ```bash
-cd /home/nestgate/Development/syntheticChemistry/agentReagents
+cd /path/to/agentReagents
 sudo ./scripts/build-cosmic-cloud-automated.sh
 ```
 

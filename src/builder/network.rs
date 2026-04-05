@@ -303,4 +303,41 @@ mod tests {
         assert_eq!(monitor.max_failures, 5);
         assert_eq!(monitor.check_timeout, Duration::from_secs(10));
     }
+
+    #[test]
+    fn network_monitor_debug_and_clone_match() {
+        let a = NetworkMonitor::new("10.0.0.1");
+        let b = a.clone();
+        assert_eq!(format!("{a:?}"), format!("{b:?}"));
+    }
+
+    #[tokio::test]
+    async fn check_ping_loopback_succeeds() {
+        let monitor = NetworkMonitor::new("127.0.0.1").with_check_timeout(Duration::from_secs(2));
+        monitor.check_ping().await.expect("ping 127.0.0.1 should work");
+    }
+
+    /// `TEST-NET-1` (RFC 5737) — expected to be unreachable from typical lab hosts, so ping fails quickly.
+    #[tokio::test]
+    async fn check_connectivity_fails_when_ping_unreachable() {
+        let monitor = NetworkMonitor::new("192.0.2.1").with_check_timeout(Duration::from_secs(2));
+        let err = monitor
+            .check_connectivity("nobody")
+            .await
+            .expect_err("unreachable host should fail ping");
+        assert!(
+            err.to_string().contains("Ping") || err.to_string().contains("ping"),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn verify_once_propagates_after_retries_on_unreachable() {
+        let monitor = NetworkMonitor::new("192.0.2.1").with_check_timeout(Duration::from_secs(2));
+        let err = monitor
+            .verify_once("u", 2, Duration::from_millis(20))
+            .await
+            .expect_err("verify should fail");
+        assert!(!err.to_string().is_empty());
+    }
 }

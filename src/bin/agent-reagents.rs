@@ -81,9 +81,12 @@ enum Commands {
         /// Bind address
         #[arg(long, default_value = "127.0.0.1")]
         listen: String,
-        /// Run in standalone mode (no Songbird registration)
+        /// Run in standalone mode (no registry registration)
         #[arg(long, default_value_t = true)]
         standalone: bool,
+        /// Logical service name for capability-based registry registration (`REGISTRY_SERVICE_NAME`)
+        #[arg(long, env = "REGISTRY_SERVICE_NAME", default_value = "agent-reagents")]
+        service_name: String,
     },
 }
 
@@ -132,11 +135,14 @@ async fn main() -> Result<()> {
             port,
             listen,
             standalone,
+            service_name,
         } => {
             let addr: std::net::SocketAddr = format!("{listen}:{port}")
                 .parse()
                 .expect("invalid listen address");
-            agent_reagents::server::run_server(addr, cli.registry, standalone).await?;
+            let registration =
+                agent_reagents::server::RegistrationSettings::with_default_socket(service_name);
+            agent_reagents::server::run_server(addr, cli.registry, standalone, registration).await?;
         }
     }
 
@@ -289,7 +295,7 @@ async fn cmd_build(
     let mut builder = ImageBuilder::from_manifest(manifest).with_timeout(timeout);
 
     // Execute build (NOTE: build_cosmic_desktop is deprecated, use generic build() in future)
-    #[allow(deprecated)]
+    #[expect(deprecated, reason = "build_cosmic_desktop retained until manifest-driven build() is the default CLI path")]
     let result = builder
         .build_cosmic_desktop(ssh_key)
         .await
@@ -373,6 +379,73 @@ async fn cmd_validate(manifest_path: &Path) -> Result<()> {
 
 /// Auto-cleanup orphaned VMs before starting a build
 /// This prevents resource leaks and ensures a clean starting state
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands};
+    use clap::{CommandFactory, Parser};
+    use std::path::Path;
+
+    #[test]
+    fn cli_parses_list_and_validate() {
+        let cli = Cli::try_parse_from([
+            "agent-reagents",
+            "-r",
+            "/tmp/reagents",
+            "list",
+            "--verbose",
+        ])
+        .expect("parse");
+        assert!(matches!(cli.command, Commands::List { verbose: true }));
+
+        let v = Cli::try_parse_from([
+            "agent-reagents",
+            "validate",
+            "/path/to/m.yaml",
+        ])
+        .expect("validate");
+        assert!(matches!(v.command, Commands::Validate { .. }));
+    }
+
+    #[test]
+    fn cli_build_accepts_key_flags() {
+        let b = Cli::try_parse_from([
+            "agent-reagents",
+            "build",
+            "manifest.yaml",
+            "--ssh-key",
+            "ssh-ed25519 AAA",
+        ])
+        .expect("build");
+        match b.command {
+            Commands::Build {
+                ssh_key,
+                ssh_key_file,
+                ..
+            } => {
+                assert_eq!(ssh_key.as_deref(), Some("ssh-ed25519 AAA"));
+                assert!(ssh_key_file.is_none());
+            }
+            _ => panic!("expected Build"),
+        }
+    }
+
+    #[test]
+    fn cli_server_command_factory() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn cli_build_manifest_path() {
+        let b = Cli::try_parse_from(["agent-reagents", "build", "./m.yaml"]).expect("build");
+        match b.command {
+            Commands::Build { manifest, .. } => {
+                assert_eq!(manifest, Path::new("./m.yaml"));
+            }
+            _ => panic!("expected Build"),
+        }
+    }
+}
+
 async fn cleanup_orphaned_vms() -> Result<()> {
     use benchscale::backend::libvirt::VmRegistry;
     use virt::connect::Connect;

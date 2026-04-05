@@ -336,3 +336,127 @@ fn find_local_package(url: &str) -> Option<PathBuf> {
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::ImageBuilder;
+    use crate::templates::{
+        PostBootStep, ResourceConfig, TemplateManifest, UserConfig, VerificationConfig,
+    };
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    static CWD_LOCK: Mutex<()> = Mutex::new(());
+
+    fn base_manifest() -> TemplateManifest {
+        TemplateManifest {
+            name: "t".to_string(),
+            version: "1.0.0".to_string(),
+            base_image: "base.img".to_string(),
+            description: None,
+            resources: ResourceConfig {
+                memory_mb: 2048,
+                vcpus: 2,
+                disk_gb: 30,
+                timeout_secs: 2400,
+                static_ip: None,
+            },
+            pci_passthrough: vec![],
+            users: vec![UserConfig {
+                name: "u".to_string(),
+                password: None,
+                groups: vec![],
+                ssh_authorized_keys: vec![],
+            }],
+            build_steps: vec![],
+            post_boot_steps: vec![],
+            verification: VerificationConfig {
+                required_packages: vec![],
+                required_services: vec![],
+                required_files: vec![],
+                verification_commands: vec![],
+            },
+            metadata: HashMap::default(),
+            created: None,
+            checksum: None,
+        }
+    }
+
+    #[test]
+    fn is_standard_apt_package_only_infrastructure() {
+        assert!(ImageBuilder::is_standard_apt_package("curl"));
+        assert!(ImageBuilder::is_standard_apt_package("CURL"));
+        assert!(!ImageBuilder::is_standard_apt_package("firefox"));
+    }
+
+    #[test]
+    fn extract_cloud_init_packages_from_post_boot() {
+        let mut m = base_manifest();
+        m.post_boot_steps = vec![
+            PostBootStep::InstallPackages {
+                packages: vec!["curl".to_string(), "ubuntu-desktop".to_string()],
+                retry: false,
+                timeout_secs: 100,
+                description: None,
+            },
+            PostBootStep::RunCommand {
+                command: "true".to_string(),
+                description: None,
+                timeout_secs: 1,
+            },
+        ];
+        let b = ImageBuilder::from_manifest(m);
+        let pkgs = b.extract_cloud_init_packages();
+        assert_eq!(pkgs, vec!["curl".to_string()]);
+    }
+
+    #[test]
+    fn filter_post_boot_removes_standard_apt_packages() {
+        let mut m = base_manifest();
+        m.post_boot_steps = vec![PostBootStep::InstallPackages {
+            packages: vec!["wget".to_string(), "vim".to_string()],
+            retry: true,
+            timeout_secs: 50,
+            description: Some("d".to_string()),
+        }];
+        let b = ImageBuilder::from_manifest(m);
+        let filtered = b.filter_post_boot_steps();
+        assert_eq!(filtered.len(), 1);
+        match &filtered[0] {
+            PostBootStep::InstallPackages { packages, .. } => {
+                assert_eq!(packages, &vec!["vim".to_string()]);
+            }
+            _ => panic!("expected InstallPackages"),
+        }
+    }
+
+    #[test]
+    fn find_local_package_returns_none_when_not_present() {
+        assert!(super::find_local_package("https://example.com/missing.deb").is_none());
+    }
+
+    #[test]
+    fn find_local_package_resolves_under_packages_dir() {
+        let _lock = CWD_LOCK.lock().expect("lock");
+        let tmp = tempfile::TempDir::new().expect("tmpdir");
+        let old = std::env::current_dir().expect("cwd");
+        std::env::set_current_dir(tmp.path()).expect("chdir");
+        std::fs::create_dir_all("packages").expect("mkdir");
+        std::fs::write("packages/foo.deb", b"x").expect("write");
+
+        let url = "https://example.com/foo.deb";
+        let p = super::find_local_package(url).expect("local");
+        assert!(p.ends_with("packages/foo.deb"));
+
+        std::env::set_current_dir(old).expect("restore cwd");
+    }
+
+    #[test]
+    fn deprecated_cosmic_yaml_template_includes_key_and_cosmic() {
+        let y = ImageBuilder::_create_cosmic_cloud_init_yaml_deprecated("ssh-rsa AAAABASE64");
+        assert!(y.contains("#cloud-config"));
+        assert!(y.contains("ssh-rsa AAAABASE64"));
+        assert!(y.contains("COSMIC"));
+        assert!(y.contains("power_state:"));
+    }
+}

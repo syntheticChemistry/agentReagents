@@ -1,3 +1,6 @@
+# Known native (C) dependencies — documented for policy / cargo-deny review:
+# - virt: libvirt FFI (direct dependency and via benchscale); no pure Rust alternative.
+
 [advisories]
 vulnerability = "deny"
 unmaintained = "warn"

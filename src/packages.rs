@@ -121,10 +121,42 @@ impl PackageManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
 
     #[test]
     fn test_package_type() {
         assert_eq!(PackageType::Deb, PackageType::Deb);
         assert_ne!(PackageType::Deb, PackageType::Rpm);
+    }
+
+    #[tokio::test]
+    async fn list_packages_empty_when_missing() {
+        let tmp = TempDir::new().expect("tmpdir");
+        let mgr = PackageManager::new(tmp.path());
+        assert!(mgr.list_packages().await.expect("list").is_empty());
+    }
+
+    #[tokio::test]
+    async fn scan_finds_deb_rpm_tarball_nested() {
+        let tmp = TempDir::new().expect("tmpdir");
+        let root = tmp.path().join("packages");
+        let nested = root.join("nest");
+        tokio::fs::create_dir_all(&nested).await.expect("mkdir");
+        tokio::fs::write(root.join("a.deb"), b"d").await.expect("write");
+        tokio::fs::write(nested.join("b.rpm"), b"r").await.expect("write");
+        tokio::fs::write(nested.join("c.tar.gz"), b"t").await.expect("write");
+        tokio::fs::write(nested.join("note.txt"), b"x").await.expect("write");
+
+        let mgr = PackageManager::new(tmp.path());
+        let mut pkgs = mgr.list_packages().await.expect("list");
+        pkgs.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(pkgs.len(), 3);
+        assert_eq!(pkgs[0].package_type, PackageType::Deb);
+        assert_eq!(pkgs[1].package_type, PackageType::Rpm);
+        assert_eq!(pkgs[2].package_type, PackageType::Tarball);
+
+        let hit = mgr.find_package("b.rpm").await.expect("find");
+        assert!(hit.is_some());
+        assert!(mgr.find_package("nope").await.expect("find").is_none());
     }
 }

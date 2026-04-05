@@ -72,7 +72,7 @@ debs/**/*.deb              # ~18MB - Software packages
 ### On This Tower (One-Time Setup)
 
 ```bash
-cd /home/nestgate/Development/syntheticChemistry/agentReagents
+cd /path/to/agentReagents
 
 # Initialize git
 git init

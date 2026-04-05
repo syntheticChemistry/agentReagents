@@ -35,7 +35,8 @@ path-absolutize = "3.1"
 # Date/time
 chrono = { version = "0.4", features = ["serde"] }
 
-# Benchscale integration (local workspace)
+# BenchScale must live at `../benchScale` (sibling checkout). Cargo does not allow `path` and
+# `git` together on one dependency; clone both repos as in README "Build Requirements".
 benchscale = { path = "../benchScale", features = ["libvirt"] }
 
 # Libvirt bindings (for lab-cleanup tool)
@@ -49,7 +50,7 @@ virt = "0.3"
 # - Environment variables for explicit configuration
 
 # CLI
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.4", features = ["derive", "env"] }
 dirs = "5.0"
 
 [dev-dependencies]

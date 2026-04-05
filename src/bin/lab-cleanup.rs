@@ -47,6 +47,48 @@ enum Commands {
     ClearRegistry,
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{Cli, Commands};
+    use clap::{CommandFactory, Parser};
+
+    #[test]
+    fn cli_parses_subcommands() {
+        let c = Cli::try_parse_from(["lab-cleanup", "status"]).expect("status");
+        assert!(matches!(c.command, Commands::Status));
+
+        let c = Cli::try_parse_from(["lab-cleanup", "clean-orphans", "--execute"]).expect("co");
+        assert!(matches!(c.command, Commands::CleanOrphans { execute: true }));
+
+        let c = Cli::try_parse_from([
+            "lab-cleanup",
+            "clean-stale",
+            "--max-age",
+            "120",
+            "--execute",
+        ])
+        .expect("cs");
+        assert!(matches!(
+            c.command,
+            Commands::CleanStale {
+                max_age: 120,
+                execute: true
+            }
+        ));
+
+        let c = Cli::try_parse_from(["lab-cleanup", "clean-all"]).expect("ca");
+        assert!(matches!(c.command, Commands::CleanAll { execute: false }));
+
+        let c = Cli::try_parse_from(["lab-cleanup", "clear-registry"]).expect("cr");
+        assert!(matches!(c.command, Commands::ClearRegistry));
+    }
+
+    #[test]
+    fn command_factory() {
+        Cli::command().debug_assert();
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();

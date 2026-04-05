@@ -6,7 +6,13 @@
 📅 **Last Updated**: March 29, 2026  
 🧪 **Tests**: 33 lib + 6 integration passing  
 🔒 **Safety**: `forbid(unsafe_code)`, `deny(clippy::unwrap_used)`, `clippy::pedantic` + `clippy::nursery`  
-📜 **License**: AGPL-3.0-only (scyBorg Provenance Trio)
+📜 **License**: AGPL-3.0-or-later (scyBorg Provenance Trio)
+
+## Security Note
+
+Template files in `templates/` contain example passwords (e.g. `iontest123`, `poptest123`, `ubuntu123`)
+that are **lab-only defaults for development VMs**. Never use these in production environments.
+Always replace template credentials before deploying to any network-accessible system.
 
 ---
 
@@ -26,6 +32,18 @@ agentReagents builds reproducible, validated VM substrates from YAML template ma
 - **Template registry** with checksums and verification
 - **plasmidBin integration** for baking primal binaries into VM images
 - **VM senescence monitoring** during builds via benchScale
+
+## Build Requirements
+
+agentReagents depends on benchScale via path dependency (`../benchScale`). Clone both repositories as siblings:
+
+```bash
+mkdir ecoPrimals && cd ecoPrimals
+git clone https://github.com/syntheticChemistry/benchScale.git
+git clone https://github.com/syntheticChemistry/agentReagents.git
+cd agentReagents
+cargo build
+```
 
 ## Quick Start
 
@@ -112,7 +130,7 @@ BENCHSCALE_MONITORING_MAX_FAILURES=180
 
 ## License
 
-AGPL-3.0-only — Part of the ecoPrimals ecosystem.
+AGPL-3.0-or-later — Part of the ecoPrimals ecosystem.
 
 ---
 

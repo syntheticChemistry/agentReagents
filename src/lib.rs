@@ -98,3 +98,4 @@ pub mod templates;
 
 // Re-export commonly used types
 pub use builder::{BuildResult, BuildState, ImageBuilder, VerificationResult};
+pub use server::RegistrationSettings;

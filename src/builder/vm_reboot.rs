@@ -84,7 +84,10 @@ impl Default for RebootConfig {
 /// # Returns
 /// * `Ok(RebootState)` - Final state on successful reboot
 /// * `Err` - Detailed error with diagnostics
-#[allow(clippy::too_many_lines)] // Reboot loop: SSH polling, libvirt state, optional diagnostics
+#[expect(
+    clippy::too_many_lines,
+    reason = "Reboot loop: SSH polling, libvirt state, optional diagnostics"
+)]
 pub async fn execute_reboot(
     vm: &VmHandle,
     username: &str,
@@ -380,4 +383,43 @@ async fn gather_boot_diagnostics(vm: &VmHandle, username: &str) -> Result<BootDi
         network_configured: network,
         recent_boot_messages: boot_messages,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reboot_config_default_sensible() {
+        let c = RebootConfig::default();
+        assert!(c.initial_wait_secs > 0);
+        assert!(c.max_wait_secs >= c.initial_wait_secs);
+        assert!(c.check_interval_secs > 0);
+        assert!(c.gather_diagnostics);
+    }
+
+    #[test]
+    fn reboot_state_clone_and_fields() {
+        let s = RebootState {
+            elapsed_secs: 3,
+            vm_running: true,
+            ssh_responsive: true,
+            ssh_error: None,
+            boot_diagnostics: None,
+        };
+        let c = s.clone();
+        assert_eq!(c.elapsed_secs, 3);
+    }
+
+    #[test]
+    fn boot_diagnostics_default_empty_messages() {
+        let d = BootDiagnostics {
+            systemd_multi_user: false,
+            systemd_graphical: true,
+            ssh_service_active: false,
+            network_configured: true,
+            recent_boot_messages: vec!["line".to_string()],
+        };
+        assert_eq!(d.recent_boot_messages.len(), 1);
+    }
 }
