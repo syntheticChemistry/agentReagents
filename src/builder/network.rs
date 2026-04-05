@@ -314,7 +314,10 @@ mod tests {
     #[tokio::test]
     async fn check_ping_loopback_succeeds() {
         let monitor = NetworkMonitor::new("127.0.0.1").with_check_timeout(Duration::from_secs(2));
-        monitor.check_ping().await.expect("ping 127.0.0.1 should work");
+        monitor
+            .check_ping()
+            .await
+            .expect("ping 127.0.0.1 should work");
     }
 
     /// `TEST-NET-1` (RFC 5737) — expected to be unreachable from typical lab hosts, so ping fails quickly.

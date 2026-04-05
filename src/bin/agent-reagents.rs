@@ -142,7 +142,8 @@ async fn main() -> Result<()> {
                 .expect("invalid listen address");
             let registration =
                 agent_reagents::server::RegistrationSettings::with_default_socket(service_name);
-            agent_reagents::server::run_server(addr, cli.registry, standalone, registration).await?;
+            agent_reagents::server::run_server(addr, cli.registry, standalone, registration)
+                .await?;
         }
     }
 
@@ -295,7 +296,10 @@ async fn cmd_build(
     let mut builder = ImageBuilder::from_manifest(manifest).with_timeout(timeout);
 
     // Execute build (NOTE: build_cosmic_desktop is deprecated, use generic build() in future)
-    #[expect(deprecated, reason = "build_cosmic_desktop retained until manifest-driven build() is the default CLI path")]
+    #[expect(
+        deprecated,
+        reason = "build_cosmic_desktop retained until manifest-driven build() is the default CLI path"
+    )]
     let result = builder
         .build_cosmic_desktop(ssh_key)
         .await
@@ -387,22 +391,13 @@ mod tests {
 
     #[test]
     fn cli_parses_list_and_validate() {
-        let cli = Cli::try_parse_from([
-            "agent-reagents",
-            "-r",
-            "/tmp/reagents",
-            "list",
-            "--verbose",
-        ])
-        .expect("parse");
+        let cli =
+            Cli::try_parse_from(["agent-reagents", "-r", "/tmp/reagents", "list", "--verbose"])
+                .expect("parse");
         assert!(matches!(cli.command, Commands::List { verbose: true }));
 
-        let v = Cli::try_parse_from([
-            "agent-reagents",
-            "validate",
-            "/path/to/m.yaml",
-        ])
-        .expect("validate");
+        let v = Cli::try_parse_from(["agent-reagents", "validate", "/path/to/m.yaml"])
+            .expect("validate");
         assert!(matches!(v.command, Commands::Validate { .. }));
     }
 

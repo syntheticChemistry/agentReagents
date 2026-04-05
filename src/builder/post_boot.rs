@@ -47,7 +47,10 @@ pub async fn execute_post_boot_steps(
 }
 
 /// Execute a single post-boot step
-#[expect(clippy::too_many_lines, reason = "Large match on PostBootStep variants and SSH paths")]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Large match on PostBootStep variants and SSH paths"
+)]
 async fn execute_post_boot_step(vm: &VmHandle, step: &PostBootStep, username: &str) -> Result<()> {
     match step {
         PostBootStep::InstallPackages {

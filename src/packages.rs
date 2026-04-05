@@ -142,10 +142,18 @@ mod tests {
         let root = tmp.path().join("packages");
         let nested = root.join("nest");
         tokio::fs::create_dir_all(&nested).await.expect("mkdir");
-        tokio::fs::write(root.join("a.deb"), b"d").await.expect("write");
-        tokio::fs::write(nested.join("b.rpm"), b"r").await.expect("write");
-        tokio::fs::write(nested.join("c.tar.gz"), b"t").await.expect("write");
-        tokio::fs::write(nested.join("note.txt"), b"x").await.expect("write");
+        tokio::fs::write(root.join("a.deb"), b"d")
+            .await
+            .expect("write");
+        tokio::fs::write(nested.join("b.rpm"), b"r")
+            .await
+            .expect("write");
+        tokio::fs::write(nested.join("c.tar.gz"), b"t")
+            .await
+            .expect("write");
+        tokio::fs::write(nested.join("note.txt"), b"x")
+            .await
+            .expect("write");
 
         let mgr = PackageManager::new(tmp.path());
         let mut pkgs = mgr.list_packages().await.expect("list");

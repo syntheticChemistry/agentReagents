@@ -136,10 +136,18 @@ mod tests {
         let tmp = TempDir::new().expect("tmpdir");
         let cloud = tmp.path().join("images/cloud");
         tokio::fs::create_dir_all(&cloud).await.expect("mkdir");
-        tokio::fs::write(cloud.join("base.img"), b"x").await.expect("write");
-        tokio::fs::write(cloud.join("other.qcow2"), b"yy").await.expect("write");
-        tokio::fs::write(cloud.join("live.iso"), b"z").await.expect("write");
-        tokio::fs::write(cloud.join("readme.txt"), b"nope").await.expect("write");
+        tokio::fs::write(cloud.join("base.img"), b"x")
+            .await
+            .expect("write");
+        tokio::fs::write(cloud.join("other.qcow2"), b"yy")
+            .await
+            .expect("write");
+        tokio::fs::write(cloud.join("live.iso"), b"z")
+            .await
+            .expect("write");
+        tokio::fs::write(cloud.join("readme.txt"), b"nope")
+            .await
+            .expect("write");
 
         let mgr = ImageManager::new(tmp.path());
         let mut imgs = mgr.list_cloud_images().await.expect("list");
@@ -159,8 +167,12 @@ mod tests {
         let templates = tmp.path().join("images/templates");
         tokio::fs::create_dir_all(&isos).await.expect("mkdir");
         tokio::fs::create_dir_all(&templates).await.expect("mkdir");
-        tokio::fs::write(isos.join("install.iso"), b"i").await.expect("write");
-        tokio::fs::write(templates.join("tmpl.qcow2"), b"q").await.expect("write");
+        tokio::fs::write(isos.join("install.iso"), b"i")
+            .await
+            .expect("write");
+        tokio::fs::write(templates.join("tmpl.qcow2"), b"q")
+            .await
+            .expect("write");
 
         let mgr = ImageManager::new(tmp.path());
         let iso = mgr.list_iso_images().await.expect("isos");

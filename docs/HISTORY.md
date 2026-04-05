@@ -1,6 +1,8 @@
-# agentReagents Changelog
+# agentReagents — Historical notes (Dec 2025)
 
-**Purpose:** Track changes to the agentReagents repository.
+**Not the canonical changelog.** See the repo root [`CHANGELOG.md`](../CHANGELOG.md).
+
+**Purpose:** Bootstrap-era record of the first agentReagents directory layout.
 
 ---
 

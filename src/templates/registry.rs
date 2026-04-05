@@ -321,7 +321,9 @@ mod tests {
         let err = registry
             .register_template(&manifest, &img)
             .expect_err("dup");
-        assert!(err.to_string().contains("already exists") || err.to_string().contains("AlreadyExists"));
+        assert!(
+            err.to_string().contains("already exists") || err.to_string().contains("AlreadyExists")
+        );
     }
 
     #[test]

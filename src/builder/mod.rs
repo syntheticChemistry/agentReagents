@@ -446,9 +446,7 @@ mod tests {
 
         let mut m = valid_manifest_with_steps();
         m.build_steps = vec![
-            BuildStep::WaitCloudInit {
-                timeout_secs: 99,
-            },
+            BuildStep::WaitCloudInit { timeout_secs: 99 },
             BuildStep::CreateFile {
                 path: "/etc/ci-test.conf".to_string(),
                 content: "ok\n".to_string(),
@@ -467,9 +465,7 @@ mod tests {
                 url: "https://ppa.example.com/ubuntu".to_string(),
                 key_url: None,
             },
-            BuildStep::Reboot {
-                wait_secs: 1,
-            },
+            BuildStep::Reboot { wait_secs: 1 },
         ];
 
         let b = ImageBuilder::from_manifest(m);

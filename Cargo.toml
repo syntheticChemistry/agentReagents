@@ -1,6 +1,6 @@
 [package]
 name = "agent-reagents"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 authors = ["ecoPrimals <dev@ecoprimals.org>"]
 description = "Template-driven VM image builder for the ecoPrimals ecosystem"

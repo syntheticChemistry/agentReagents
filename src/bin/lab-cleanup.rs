@@ -58,7 +58,10 @@ mod tests {
         assert!(matches!(c.command, Commands::Status));
 
         let c = Cli::try_parse_from(["lab-cleanup", "clean-orphans", "--execute"]).expect("co");
-        assert!(matches!(c.command, Commands::CleanOrphans { execute: true }));
+        assert!(matches!(
+            c.command,
+            Commands::CleanOrphans { execute: true }
+        ));
 
         let c = Cli::try_parse_from([
             "lab-cleanup",

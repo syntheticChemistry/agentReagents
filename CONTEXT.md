@@ -17,13 +17,20 @@ provides the base materials that benchScale consumes to create lab
 environments (cloud images, cloud-init configs) and that gate deployments
 consume for initial provisioning (ISOs, templates, driver reagents).
 
+## Status (2026-04)
+
+- **Release**: v0.2.0 (see root `CHANGELOG.md`)
+- **Quality**: Grade A maintenance posture; **60.2%** line coverage (89 lib tests), `tarpaulin` fail-under 60%
+- **Registration**: Capability-based `RegistrationSettings` (no hardcoded Songbird-only paths)
+- **Lint policy**: `#[expect(...)]` with reasons (no bare `#[allow]`)
+
 ## Architecture
 
 - **src/** — Rust crate: template builder, verification engine, JSON-RPC server
 - **templates/** — YAML manifests for VM builds, including gate templates
-- **scripts/** — Automated setup, download, and template-building scripts
+- **scripts/** — Automated setup, download, and template-building scripts (see `scripts/README.md`)
 - **configs/** — Cloud-init YAML configs for VM provisioning
-- **docs/** — CHANGELOG, MANIFEST, CHECKSUMS, SOURCES
+- **docs/** — `HISTORY.md` (bootstrap-era notes), MANIFEST, CHECKSUMS, SOURCES; canonical changelog is root `CHANGELOG.md`
 - **bins/** — Compiled binaries (gitignored, populated by scripts)
 - **packages/** — Downloaded packages (gitignored, downloaded by scripts)
 - **isos/** — ISO images (gitignored, populated by scripts)

@@ -258,7 +258,10 @@ fn dispatch_method(method: &str, params: &serde_json::Value, state: &ServerState
 // health.*
 // ---------------------------------------------------------------------------
 
-#[expect(clippy::unnecessary_wraps, reason = "Uniform MethodResult for JSON-RPC handler table")]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Uniform MethodResult for JSON-RPC handler table"
+)]
 fn health_liveness() -> MethodResult {
     Ok(serde_json::json!({
         "status": "alive",
@@ -267,7 +270,10 @@ fn health_liveness() -> MethodResult {
     }))
 }
 
-#[expect(clippy::unnecessary_wraps, reason = "Uniform MethodResult for JSON-RPC handler table")]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Uniform MethodResult for JSON-RPC handler table"
+)]
 fn health_readiness(state: &ServerState) -> MethodResult {
     let registry_exists = state.registry_dir.exists();
     Ok(serde_json::json!({
@@ -276,7 +282,10 @@ fn health_readiness(state: &ServerState) -> MethodResult {
     }))
 }
 
-#[expect(clippy::unnecessary_wraps, reason = "Uniform MethodResult for JSON-RPC handler table")]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Uniform MethodResult for JSON-RPC handler table"
+)]
 fn health_check(state: &ServerState) -> MethodResult {
     let registry_ok = TemplateRegistry::new(&state.registry_dir).is_ok();
     let template_count = TemplateRegistry::new(&state.registry_dir)
@@ -518,8 +527,8 @@ verification: {}
         let state = ServerState {
             registry_dir: tmp.path().to_path_buf(),
         };
-        let reg = dispatch_method("registry.list", &serde_json::json!({}), &state)
-            .expect("registry");
+        let reg =
+            dispatch_method("registry.list", &serde_json::json!({}), &state).expect("registry");
         assert_eq!(reg["templates"], serde_json::json!([]));
 
         let templates_dir = tmp.path().join("templates");
@@ -647,17 +656,13 @@ verification: {}
         }
         assert!(ok, "server did not accept connections on {addr}");
 
-        let mut stream = tokio::net::TcpStream::connect(addr)
-            .await
-            .expect("connect");
+        let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
         let req = r#"{"jsonrpc":"2.0","method":"health.liveness","params":{},"id":42}"#;
         stream.write_all(req.as_bytes()).await.expect("write");
         stream.write_all(b"\n").await.expect("newline");
         stream.write_all(b"\n").await.expect("blank line");
         stream
-            .write_all(
-                br#"{"jsonrpc":"2.0","method":"health.readiness","params":{},"id":43}"#,
-            )
+            .write_all(br#"{"jsonrpc":"2.0","method":"health.readiness","params":{},"id":43}"#)
             .await
             .expect("write2");
         stream.write_all(b"\n").await.expect("newline2");

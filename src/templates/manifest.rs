@@ -466,9 +466,7 @@ mod tests {
                 groups: vec!["sudo".to_string()],
                 ssh_authorized_keys: vec![],
             }],
-            build_steps: vec![BuildStep::WaitCloudInit {
-                timeout_secs: 120,
-            }],
+            build_steps: vec![BuildStep::WaitCloudInit { timeout_secs: 120 }],
             post_boot_steps: vec![PostBootStep::RunCommand {
                 command: "true".to_string(),
                 description: None,

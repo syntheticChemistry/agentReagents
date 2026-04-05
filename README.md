@@ -2,7 +2,7 @@
 
 **Template-driven VM image builder for the ecoPrimals ecosystem**
 
-🟢 **Status**: Production Ready — v0.1.0, Rust 2024 edition  
+🟢 **Status**: Production Ready — v0.2.0, Rust 2024 edition, Grade A  
 📅 **Last Updated**: March 29, 2026  
 🧪 **Tests**: 33 lib + 6 integration passing  
 🔒 **Safety**: `forbid(unsafe_code)`, `deny(clippy::unwrap_used)`, `clippy::pedantic` + `clippy::nursery`  
