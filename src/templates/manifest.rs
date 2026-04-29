@@ -86,6 +86,12 @@ pub struct ResourceConfig {
 pub struct PciPassthroughConfig {
     /// PCI bus/device/function (e.g., "0000:4d:00.0")
     pub bdf: String,
+
+    /// Prevent Function Level Reset on VM shutdown so GPU hardware
+    /// state (WPR, HBM2 training, falcon firmware) survives the
+    /// VM-to-host transition. Only useful for reagent-capture flows.
+    #[serde(default)]
+    pub no_flr: bool,
 }
 
 const fn default_timeout() -> u64 {
@@ -248,6 +254,20 @@ pub enum PostBootStep {
         /// Octal permission string for the copied file.
         #[serde(default = "default_file_mode")]
         mode: String,
+    },
+
+    /// Fetch a file or directory from VM to host (artifact extraction).
+    ///
+    /// Uses SCP to pull `remote_path` on the guest to `local_path` on the
+    /// host.  Set `recursive` to true for directories.
+    FetchFile {
+        /// Absolute path on the guest.
+        remote_path: String,
+        /// Destination path on the host (absolute or relative to builder CWD).
+        local_path: String,
+        /// Whether to copy recursively (for directories).
+        #[serde(default)]
+        recursive: bool,
     },
 
     /// Enable a systemd service

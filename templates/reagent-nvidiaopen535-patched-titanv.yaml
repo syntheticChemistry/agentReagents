@@ -1,0 +1,210 @@
+name: reagent-nvidiaopen535-patched-titanv
+version: 1.0.0
+description: |
+  Disposable VM that builds a patched nvidia-open 535.230.02 kernel module with
+  NVreg_PreserveHwState support. When loaded with PreserveHwState=1, rmmod skips
+  GPU hardware cleanup (PMU halt, DMEM scrub, RM shutdown) preserving the full
+  security context for sovereign MMIO compute via ember.
+
+  Workflow:
+    1. Boot VM with Titan V passthrough
+    2. Build patched nvidia module from open-gpu-kernel-modules source
+    3. Load with: modprobe nvidia NVreg_PreserveHwState=1
+    4. GPU initializes normally (HBM2 trained, PMU/RM alive, PRI privilege active)
+    5. rmmod nvidia — module unloads but GPU hardware state persists
+    6. Host ember can now access fully-initialized GPU via VFIO BAR0
+
+base_image: images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+
+resources:
+  memory_mb: 8192
+  vcpus: 8
+  disk_gb: 40
+  timeout_secs: 1800
+
+pci_passthrough:
+  - bdf: "0000:03:00.0"
+
+users:
+  - name: reagent
+    password: reagent
+    groups:
+      - sudo
+      - users
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 300
+
+  - type: install_packages
+    packages:
+      - linux-headers-generic
+      - build-essential
+      - pciutils
+      - kmod
+      - wget
+      - python3
+      - git
+      - patch
+
+  - type: run_command
+    description: "Clone open-gpu-kernel-modules at tag 535.230.02"
+    command: |
+      cd /opt
+      git clone --depth 1 --branch 535.230.02 \
+        https://github.com/NVIDIA/open-gpu-kernel-modules.git nvidia-open-535
+      echo "Cloned open-gpu-kernel-modules 535.230.02"
+
+  - type: create_file
+    path: /opt/nvidia-open-535/preserve-hw-state.patch
+    content: |
+      --- a/kernel-open/nvidia/nv.c
+      +++ b/kernel-open/nvidia/nv.c
+      @@ -627,12 +627,25 @@
+           return rc;
+       }
+
+      +/*
+      + * Module parameter: when non-zero, skip GPU hardware cleanup on module unload.
+      + * Preserves PMU RM firmware, HBM2 training, and PRI privilege context so that
+      + * a subsequent VFIO user can perform sovereign compute without re-init.
+      + * Only use in disposable VMs (agentReagents) — leaks kernel memory by design.
+      + */
+      +int NVreg_PreserveHwState = 0;
+      +
+       static void
+       nv_module_exit(nv_stack_t *sp)
+       {
+           nv_module_state_exit(sp);
+
+      -    rm_shutdown_rm(sp);
+      +    if (NVreg_PreserveHwState) {
+      +        nv_printf(NV_DBG_ERRORS, "NVRM: PreserveHwState=1 — skipping rm_shutdown_rm()\n");
+      +    } else {
+      +        rm_shutdown_rm(sp);
+      +    }
+
+           nv_destroy_rsync_info();
+           nvlink_drivers_exit();
+      --- a/kernel-open/nvidia/nv-pci.c
+      +++ b/kernel-open/nvidia/nv-pci.c
+      @@ -755,6 +755,8 @@
+           NvU8 regs_bar_index = nv_bar_index_to_os_bar_index(pci_dev,
+               NV_GPU_BAR_INDEX_REGS);
+
+      +    extern int NVreg_PreserveHwState;
+      +
+           nv_printf(NV_DBG_SETUP, "NVRM: removing GPU %04x:%02x:%02x.%x\n",
+               NV_PCI_DOMAIN_NUMBER(pci_dev), NV_PCI_BUS_NUMBER(pci_dev),
+               NV_PCI_SLOT_NUMBER(pci_dev), PCI_FUNC(pci_dev->devfn));
+      @@ -870,8 +872,14 @@
+               {
+                   rm_disable_gpu_state_persistence(sp, nv);
+               }
+      -        nv_shutdown_adapter(sp, nv, nvl);
+      -        nv_dev_free_stacks(nvl);
+      +        if (NVreg_PreserveHwState) {
+      +            nv_printf(NV_DBG_ERRORS,
+      +                "NVRM: PreserveHwState=1 — skipping nv_shutdown_adapter()\n");
+      +            nv_dev_free_stacks(nvl);
+      +        } else {
+      +            nv_shutdown_adapter(sp, nv, nvl);
+      +            nv_dev_free_stacks(nvl);
+      +        }
+           }
+
+           if (nvl->sysfs_config_file != NULL)
+      @@ -895,7 +903,12 @@
+
+           rm_i2c_remove_adapters(sp, nv);
+      -    rm_free_private_state(sp, nv);
+      +    if (NVreg_PreserveHwState) {
+      +        nv_printf(NV_DBG_ERRORS,
+      +            "NVRM: PreserveHwState=1 — skipping rm_free_private_state()\n");
+      +    } else {
+      +        rm_free_private_state(sp, nv);
+      +    }
+           release_mem_region(NV_PCI_RESOURCE_START(pci_dev, regs_bar_index),
+               NV_PCI_RESOURCE_SIZE(pci_dev, regs_bar_index));
+    mode: "0644"
+
+  - type: run_command
+    description: "Apply preserve-hw-state patch and build"
+    command: |
+      cd /opt/nvidia-open-535
+      patch -p1 < preserve-hw-state.patch
+      make -j$(nproc) modules
+      echo "Build complete"
+
+  - type: create_file
+    path: /opt/reagent/test-preserve.sh
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      GPU_BDF=$(lspci -d 10de:1d81 -D | head -1 | awk '{print $1}')
+      if [ -z "$GPU_BDF" ]; then
+        echo "ERROR: No Titan V found"
+        exit 1
+      fi
+      echo "Titan V at $GPU_BDF"
+
+      echo "=== Load patched nvidia with PreserveHwState=1 ==="
+      cd /opt/nvidia-open-535
+      insmod kernel-open/nvidia.ko NVreg_PreserveHwState=1
+      sleep 3
+      nvidia-smi || echo "nvidia-smi not available (expected without userspace)"
+
+      echo "=== Read PMC_ENABLE (warm state) ==="
+      python3 -c "
+      import mmap, struct, os
+      fd = os.open('/sys/bus/pci/devices/$GPU_BDF/resource0', os.O_RDWR | os.O_SYNC)
+      mm = mmap.mmap(fd, 16*1024*1024, mmap.MAP_SHARED, mmap.PROT_READ)
+      mm.seek(0x200); pmc = struct.unpack('<I', mm.read(4))[0]
+      print(f'PMC_ENABLE = {pmc:#010x} ({pmc.bit_count()} engines)')
+      mm.close(); os.close(fd)
+      "
+
+      echo "=== Unload nvidia (PreserveHwState=1) ==="
+      rmmod nvidia_uvm 2>/dev/null || true
+      rmmod nvidia
+
+      echo "=== Verify GPU state preserved ==="
+      python3 -c "
+      import mmap, struct, os
+      fd = os.open('/sys/bus/pci/devices/$GPU_BDF/resource0', os.O_RDWR | os.O_SYNC)
+      mm = mmap.mmap(fd, 16*1024*1024, mmap.MAP_SHARED, mmap.PROT_READ)
+      mm.seek(0); boot0 = struct.unpack('<I', mm.read(4))[0]
+      mm.seek(0x200); pmc = struct.unpack('<I', mm.read(4))[0]
+      mm.seek(0x10A100); pmu_cpuctl = struct.unpack('<I', mm.read(4))[0]
+      print(f'BOOT0       = {boot0:#010x}')
+      print(f'PMC_ENABLE  = {pmc:#010x} ({pmc.bit_count()} engines)')
+      print(f'PMU_CPUCTL  = {pmu_cpuctl:#010x}')
+      preserved = pmc.bit_count() > 8 and pmu_cpuctl not in [0x50, 0x10, 0]
+      print(f'HW STATE: {\"PRESERVED\" if preserved else \"DESTROYED\"} ')
+      mm.close(); os.close(fd)
+      "
+
+      echo "=== Test complete ==="
+    mode: "0755"
+
+verification:
+  required_packages:
+    - build-essential
+    - pciutils
+  required_files:
+    - /opt/nvidia-open-535/kernel-open/nvidia.ko
+    - /opt/reagent/test-preserve.sh
+  verification_commands:
+    - command: "lspci -d 10de:1d81"
+      expected_exit_code: 0
+      description: "Titan V visible via PCI passthrough"
+    - command: "modinfo /opt/nvidia-open-535/kernel-open/nvidia.ko | grep PreserveHwState"
+      expected_exit_code: 0
+      description: "Patched module has PreserveHwState parameter"
+
+metadata:
+  gpu: "Titan V (GV100)"
+  driver: "nvidia-open-535.230.02-patched"
+  purpose: "sovereign-compute-state-preservation"
+  disposable: "true"

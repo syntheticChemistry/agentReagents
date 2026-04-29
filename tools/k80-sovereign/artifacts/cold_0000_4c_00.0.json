@@ -1,0 +1,11 @@
+{
+  "BOOT0": "0x0f22d0a1",
+  "PMC_ENABLE": "0xc0002020",
+  "PMU_CPUCTL": "0x00000020",
+  "PRI_NSTATIONS": "0x00000000",
+  "GPC0_ID": "0xbadf1100",
+  "GR_HUB": "0xbadf1201",
+  "FECS_CPUCTL": "0xbadf1200",
+  "GPCCS_CPUCTL": "0xbadf3000",
+  "PMU_PGOB": "0x00000000"
+}

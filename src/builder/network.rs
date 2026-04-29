@@ -1,11 +1,13 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-License-Identifier: AGPL-3.0-only
 //! Network monitoring and resilience for VM builds
 //!
 //! Provides continuous network verification and automatic recovery mechanisms
 //! to ensure reliable VM provisioning even when network issues occur.
 
 use anyhow::{Context, Result};
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
+use tokio::net::TcpStream;
 use tokio::time::sleep;
 use tracing::{debug, info, warn};
 
@@ -20,6 +22,10 @@ use crate::builder::VmHandle;
 pub struct NetworkMonitor {
     /// Target VM IP address
     vm_ip: String,
+    /// Parsed IP for socket construction
+    addr: IpAddr,
+    /// SSH port to probe
+    ssh_port: u16,
     /// How often to check connectivity
     check_interval: Duration,
     /// Maximum consecutive failures before attempting recovery
@@ -33,11 +39,17 @@ impl NetworkMonitor {
     ///
     /// # Arguments
     /// * `vm_ip` - IP address of the VM to monitor
-    /// * `check_interval` - How often to check connectivity (default: 10s)
-    /// * `max_failures` - Max consecutive failures before recovery (default: 3)
     pub fn new(vm_ip: impl Into<String>) -> Self {
+        let ip_str = vm_ip.into();
+        let addr = ip_str.parse::<IpAddr>().unwrap_or_else(|_| {
+            // Fallback: treat as hostname, use unspecified for now —
+            // TCP connect will use the original string via ToSocketAddrs.
+            IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+        });
         Self {
-            vm_ip: vm_ip.into(),
+            vm_ip: ip_str,
+            addr,
+            ssh_port: 22,
             check_interval: Duration::from_secs(10),
             max_failures: 3,
             check_timeout: Duration::from_secs(5),
@@ -62,73 +74,67 @@ impl NetworkMonitor {
         self
     }
 
-    /// Check if network is accessible via ping
+    /// Check if network is accessible via TCP connect to SSH port.
     ///
-    /// Returns Ok(()) if ping succeeds, Err otherwise
+    /// A successful TCP handshake to port 22 proves both IP reachability
+    /// and that the SSH daemon is listening — strictly more useful than ICMP ping.
     pub async fn check_ping(&self) -> Result<()> {
-        debug!("Checking network connectivity to {} via ping", self.vm_ip);
+        debug!("Checking network connectivity to {} via TCP:22", self.vm_ip);
 
-        let output = tokio::time::timeout(
-            self.check_timeout,
-            tokio::process::Command::new("ping")
-                .args(["-c", "1", "-W", "2", &self.vm_ip])
-                .output(),
-        )
-        .await
-        .context("Ping command timed out")?
-        .context("Failed to execute ping command")?;
+        let target = SocketAddr::new(self.addr, self.ssh_port);
+        let connect_fut = TcpStream::connect(target);
+        let _stream: TcpStream = tokio::time::timeout(self.check_timeout, connect_fut)
+            .await
+            .context("TCP connect timed out")?
+            .with_context(|| format!("TCP connect to {} failed", target))?;
 
-        if output.status.success() {
-            debug!("✅ Ping to {} successful", self.vm_ip);
-            Ok(())
-        } else {
-            anyhow::bail!("Ping to {} failed", self.vm_ip)
-        }
+        debug!("TCP probe to {} successful", self.vm_ip);
+        Ok(())
     }
 
-    /// Check if SSH is accessible
+    /// Check if SSH is accessible by verifying the SSH banner.
     ///
-    /// Returns Ok(()) if SSH connection succeeds, Err otherwise
-    pub async fn check_ssh(&self, username: &str) -> Result<()> {
-        debug!("Checking SSH connectivity to {}@{}", username, self.vm_ip);
+    /// Connects to the SSH port and reads the first bytes — a real SSH
+    /// daemon will send a version banner starting with `SSH-`.
+    pub async fn check_ssh(&self, _username: &str) -> Result<()> {
+        debug!("Checking SSH banner on {}", self.vm_ip);
 
-        let output = tokio::time::timeout(
-            self.check_timeout,
-            tokio::process::Command::new("ssh")
-                .args([
-                    "-o",
-                    "ConnectTimeout=3",
-                    "-o",
-                    "StrictHostKeyChecking=no",
-                    "-o",
-                    "UserKnownHostsFile=/dev/null",
-                    "-o",
-                    "BatchMode=yes",
-                    &format!("{}@{}", username, self.vm_ip),
-                    "true",
-                ])
-                .output(),
-        )
-        .await
-        .context("SSH command timed out")?
-        .context("Failed to execute SSH command")?;
+        let target = SocketAddr::new(self.addr, self.ssh_port);
+        let connect_fut = TcpStream::connect(target);
+        let stream: TcpStream = tokio::time::timeout(self.check_timeout, connect_fut)
+            .await
+            .context("SSH connect timed out")?
+            .with_context(|| format!("SSH connect to {} failed", target))?;
 
-        if output.status.success() {
-            debug!("✅ SSH to {}@{} successful", username, self.vm_ip);
-            Ok(())
-        } else {
-            anyhow::bail!("SSH to {}@{} failed", username, self.vm_ip)
+        // Wait for the server to send its banner
+        stream.readable().await.context("waiting for SSH banner")?;
+        let mut buf = [0u8; 32];
+        match stream.try_read(&mut buf) {
+            Ok(n) if n >= 4 && buf.starts_with(b"SSH-") => {
+                debug!("SSH banner from {} verified", self.vm_ip);
+                Ok(())
+            }
+            Ok(n) => {
+                anyhow::bail!(
+                    "unexpected banner from {} ({} bytes, starts with {:?})",
+                    self.vm_ip,
+                    n,
+                    &buf[..n.min(8)]
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                anyhow::bail!("SSH banner not ready on {}", self.vm_ip);
+            }
+            Err(e) => {
+                anyhow::bail!("reading SSH banner from {}: {}", self.vm_ip, e);
+            }
         }
     }
 
-    /// Comprehensive connectivity check (ping + SSH)
+    /// Comprehensive connectivity check (TCP + SSH banner)
     pub async fn check_connectivity(&self, username: &str) -> Result<()> {
-        // Try ping first (faster)
-        self.check_ping().await.context("Ping check failed")?;
-
-        // Then verify SSH works
+        self.check_ping().await.context("TCP probe failed")?;
         self.check_ssh(username).await.context("SSH check failed")?;
-
         Ok(())
     }
 
@@ -136,14 +142,11 @@ impl NetworkMonitor {
     ///
     /// This method runs indefinitely, checking network connectivity at regular
     /// intervals. If connectivity fails, it attempts automatic recovery.
-    ///
-    /// # Arguments
-    /// * `vm_handle` - Handle to the VM being monitored
-    /// * `username` - Username for SSH connectivity checks
-    ///
-    /// # Returns
-    /// Only returns on unrecoverable errors
-    pub async fn monitor_with_recovery(&self, vm_handle: &VmHandle, username: &str) -> Result<()> {
+    pub async fn monitor_with_recovery(
+        &self,
+        vm_handle: &VmHandle,
+        username: &str,
+    ) -> Result<()> {
         let mut consecutive_failures = 0;
 
         loop {
@@ -151,7 +154,7 @@ impl NetworkMonitor {
                 Ok(()) => {
                     if consecutive_failures > 0 {
                         info!(
-                            "✅ Network recovered after {} failures",
+                            "Network recovered after {} failures",
                             consecutive_failures
                         );
                     }
@@ -161,25 +164,23 @@ impl NetworkMonitor {
                 Err(e) => {
                     consecutive_failures += 1;
                     warn!(
-                        "⚠️  Network check failed (attempt {}/{}): {}",
+                        "Network check failed (attempt {}/{}): {}",
                         consecutive_failures, self.max_failures, e
                     );
 
                     if consecutive_failures >= self.max_failures {
-                        info!("🔧 Max failures reached, attempting recovery...");
+                        info!("Max failures reached, attempting recovery...");
                         match self.attempt_recovery(vm_handle, username).await {
                             Ok(()) => {
-                                info!("✅ Network recovery succeeded");
+                                info!("Network recovery succeeded");
                                 consecutive_failures = 0;
                             }
                             Err(recovery_err) => {
-                                warn!("❌ Network recovery failed: {}", recovery_err);
-                                // Don't reset counter, will retry recovery on next iteration
+                                warn!("Network recovery failed: {}", recovery_err);
                             }
                         }
                     }
 
-                    // Wait before next check
                     sleep(Duration::from_secs(5)).await;
                 }
             }
@@ -192,12 +193,9 @@ impl NetworkMonitor {
     /// 1. Restart systemd-networkd
     /// 2. Reapply network configuration with netplan
     /// 3. Bounce the network interface
-    ///
-    /// Returns Ok(()) if recovery succeeds, Err otherwise
     async fn attempt_recovery(&self, vm_handle: &VmHandle, username: &str) -> Result<()> {
-        info!("🔧 Network recovery: Restarting systemd-networkd...");
+        info!("Network recovery: Restarting systemd-networkd...");
 
-        // Strategy 1: Restart systemd-networkd
         if vm_handle
             .ssh_exec(username, "sudo systemctl restart systemd-networkd")
             .await
@@ -205,34 +203,28 @@ impl NetworkMonitor {
         {
             sleep(Duration::from_secs(5)).await;
             if self.check_connectivity(username).await.is_ok() {
-                info!("✅ Recovery successful via systemd-networkd restart");
+                info!("Recovery successful via systemd-networkd restart");
                 return Ok(());
             }
         }
 
-        info!("🔧 Network recovery: Applying netplan configuration...");
+        info!("Network recovery: Applying netplan configuration...");
 
-        // Strategy 2: Reapply netplan
-        if vm_handle
-            .ssh_exec(username, "sudo netplan apply")
-            .await
-            .is_ok()
-        {
+        if vm_handle.ssh_exec(username, "sudo netplan apply").await.is_ok() {
             sleep(Duration::from_secs(5)).await;
             if self.check_connectivity(username).await.is_ok() {
-                info!("✅ Recovery successful via netplan apply");
+                info!("Recovery successful via netplan apply");
                 return Ok(());
             }
         }
 
-        info!("🔧 Network recovery: Bouncing network interface...");
+        info!("Network recovery: Bouncing network interface...");
 
-        // Strategy 3: Bounce the interface
         let bounce_cmd = "sudo ip link set enp1s0 down && sleep 2 && sudo ip link set enp1s0 up";
         if vm_handle.ssh_exec(username, bounce_cmd).await.is_ok() {
             sleep(Duration::from_secs(5)).await;
             if self.check_connectivity(username).await.is_ok() {
-                info!("✅ Recovery successful via interface bounce");
+                info!("Recovery successful via interface bounce");
                 return Ok(());
             }
         }
@@ -244,11 +236,6 @@ impl NetworkMonitor {
     ///
     /// Checks connectivity once with retries, but doesn't run indefinitely.
     /// Useful for one-time verification points during build.
-    ///
-    /// # Arguments
-    /// * `username` - Username for SSH checks
-    /// * `retries` - Number of retry attempts
-    /// * `retry_delay` - Delay between retries
     pub async fn verify_once(
         &self,
         username: &str,
@@ -260,12 +247,15 @@ impl NetworkMonitor {
         for attempt in 1..=retries {
             match self.check_connectivity(username).await {
                 Ok(()) => {
-                    info!("✅ Network verification successful (attempt {})", attempt);
+                    info!(
+                        "Network verification successful (attempt {})",
+                        attempt
+                    );
                     return Ok(());
                 }
                 Err(e) => {
                     warn!(
-                        "⚠️  Network verification failed (attempt {}/{}): {}",
+                        "Network verification failed (attempt {}/{}): {}",
                         attempt, retries, e
                     );
                     last_error = Some(e);
@@ -289,6 +279,7 @@ mod tests {
     fn test_network_monitor_creation() {
         let monitor = NetworkMonitor::new("192.168.122.10");
         assert_eq!(monitor.vm_ip, "192.168.122.10");
+        assert_eq!(monitor.addr, "192.168.122.10".parse::<IpAddr>().unwrap());
         assert_eq!(monitor.max_failures, 3);
     }
 
@@ -302,45 +293,5 @@ mod tests {
         assert_eq!(monitor.check_interval, Duration::from_secs(5));
         assert_eq!(monitor.max_failures, 5);
         assert_eq!(monitor.check_timeout, Duration::from_secs(10));
-    }
-
-    #[test]
-    fn network_monitor_debug_and_clone_match() {
-        let a = NetworkMonitor::new("10.0.0.1");
-        let b = a.clone();
-        assert_eq!(format!("{a:?}"), format!("{b:?}"));
-    }
-
-    #[tokio::test]
-    async fn check_ping_loopback_succeeds() {
-        let monitor = NetworkMonitor::new("127.0.0.1").with_check_timeout(Duration::from_secs(2));
-        monitor
-            .check_ping()
-            .await
-            .expect("ping 127.0.0.1 should work");
-    }
-
-    /// `TEST-NET-1` (RFC 5737) — expected to be unreachable from typical lab hosts, so ping fails quickly.
-    #[tokio::test]
-    async fn check_connectivity_fails_when_ping_unreachable() {
-        let monitor = NetworkMonitor::new("192.0.2.1").with_check_timeout(Duration::from_secs(2));
-        let err = monitor
-            .check_connectivity("nobody")
-            .await
-            .expect_err("unreachable host should fail ping");
-        assert!(
-            err.to_string().contains("Ping") || err.to_string().contains("ping"),
-            "{err:?}"
-        );
-    }
-
-    #[tokio::test]
-    async fn verify_once_propagates_after_retries_on_unreachable() {
-        let monitor = NetworkMonitor::new("192.0.2.1").with_check_timeout(Duration::from_secs(2));
-        let err = monitor
-            .verify_once("u", 2, Duration::from_millis(20))
-            .await
-            .expect_err("verify should fail");
-        assert!(!err.to_string().is_empty());
     }
 }

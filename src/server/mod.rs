@@ -58,11 +58,11 @@ impl RegistrationSettings {
 
 /// Standard JSON-RPC 2.0 error codes.
 mod error_codes {
-    pub const PARSE_ERROR: i64 = -32700;
-    pub const INVALID_REQUEST: i64 = -32600;
-    pub const METHOD_NOT_FOUND: i64 = -32601;
-    pub const INVALID_PARAMS: i64 = -32602;
-    pub const INTERNAL_ERROR: i64 = -32603;
+    pub(super) const PARSE_ERROR: i64 = -32700;
+    pub(super) const INVALID_REQUEST: i64 = -32600;
+    pub(super) const METHOD_NOT_FOUND: i64 = -32601;
+    pub(super) const INVALID_PARAMS: i64 = -32602;
+    pub(super) const INTERNAL_ERROR: i64 = -32603;
 }
 
 /// JSON-RPC 2.0 request envelope.

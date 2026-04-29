@@ -50,12 +50,14 @@ impl ImageBuilder {
         // Get base image path from manifest
         let base_image = Path::new(&self.manifest.base_image);
 
-        // Convert manifest PCI passthrough configs to benchScale types
         let pci_devices: Vec<benchscale::PciPassthroughDevice> = self
             .manifest
             .pci_passthrough
             .iter()
-            .map(|p| benchscale::PciPassthroughDevice { bdf: p.bdf.clone() })
+            .map(|p| benchscale::PciPassthroughDevice {
+                bdf: p.bdf.clone(),
+                no_flr: p.no_flr,
+            })
             .collect();
 
         // Create VM using benchScale with manifest-defined resources

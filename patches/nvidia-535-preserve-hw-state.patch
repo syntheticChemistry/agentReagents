@@ -1,0 +1,71 @@
+--- a/kernel-open/nvidia/nv.c
++++ b/kernel-open/nvidia/nv.c
+@@ -627,12 +627,25 @@
+     return rc;
+ }
+ 
++/*
++ * Module parameter: when non-zero, skip GPU hardware cleanup on module unload.
++ * This preserves the PMU Resource Manager firmware, HBM2 training state, and
++ * PRI privilege context so that a subsequent VFIO user can perform sovereign
++ * GPU compute without a full driver re-initialization.
++ *
++ * Only use in disposable VMs (agentReagents) — leaks kernel memory by design.
++ */
++int NVreg_PreserveHwState = 0;
++
+ static void
+ nv_module_exit(nv_stack_t *sp)
+ {
+     nv_module_state_exit(sp);
+ 
+-    rm_shutdown_rm(sp);
++    if (NVreg_PreserveHwState) {
++        nv_printf(NV_DBG_ERRORS, "NVRM: PreserveHwState=1 — skipping rm_shutdown_rm()\n");
++    } else {
++        rm_shutdown_rm(sp);
++    }
+ 
+     nv_destroy_rsync_info();
+     nvlink_drivers_exit();
+--- a/kernel-open/nvidia/nv-pci.c
++++ b/kernel-open/nvidia/nv-pci.c
+@@ -755,6 +755,8 @@
+     NvU8 regs_bar_index = nv_bar_index_to_os_bar_index(pci_dev,
+         NV_GPU_BAR_INDEX_REGS);
+ 
++    extern int NVreg_PreserveHwState;
++
+     nv_printf(NV_DBG_SETUP, "NVRM: removing GPU %04x:%02x:%02x.%x\n",
+         NV_PCI_DOMAIN_NUMBER(pci_dev), NV_PCI_BUS_NUMBER(pci_dev),
+         NV_PCI_SLOT_NUMBER(pci_dev), PCI_FUNC(pci_dev->devfn));
+@@ -870,8 +872,14 @@
+         {
+             rm_disable_gpu_state_persistence(sp, nv);
+         }
+-        nv_shutdown_adapter(sp, nv, nvl);
+-        nv_dev_free_stacks(nvl);
++        if (NVreg_PreserveHwState) {
++            nv_printf(NV_DBG_ERRORS,
++                "NVRM: PreserveHwState=1 — skipping nv_shutdown_adapter()\n");
++            nv_dev_free_stacks(nvl);
++        } else {
++            nv_shutdown_adapter(sp, nv, nvl);
++            nv_dev_free_stacks(nvl);
++        }
+     }
+ 
+     if (nvl->sysfs_config_file != NULL)
+@@ -895,7 +903,12 @@
+ 
+     rm_i2c_remove_adapters(sp, nv);
+-    rm_free_private_state(sp, nv);
++    if (NVreg_PreserveHwState) {
++        nv_printf(NV_DBG_ERRORS,
++            "NVRM: PreserveHwState=1 — skipping rm_free_private_state()\n");
++    } else {
++        rm_free_private_state(sp, nv);
++    }
+     release_mem_region(NV_PCI_RESOURCE_START(pci_dev, regs_bar_index),
+         NV_PCI_RESOURCE_SIZE(pci_dev, regs_bar_index));
+ 

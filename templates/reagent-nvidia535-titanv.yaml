@@ -1,9 +1,18 @@
 name: reagent-nvidia535-titanv
-version: 1.0.0
+version: 2.0.0
 description: |
   Disposable VM for capturing nvidia-535 init sequence on Titan V (GV100).
-  GPU passed through via VFIO. mmiotrace captures full register write sequence.
-  VM is destroyed after capture — driver never touches host kernel.
+  GPU passed through via VFIO with no_flr=true so hardware state (WPR,
+  HBM2 training, falcon firmware) survives VM shutdown for host ember
+  to consume.
+
+  Experiment 173 — Vendor UEFI WPR Capture:
+    Phase 1: Cold BAR0 + falcon snapshot
+    Phase 2: mmiotrace during nvidia module load
+    Phase 3: Warm BAR0 + WPR + falcon snapshot
+    Phase 4: rmmod nvidia
+    Phase 5: Post-rmmod WPR persistence test
+    Phase 6: Artifact extraction to host
 
 base_image: images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
 
@@ -11,10 +20,11 @@ resources:
   memory_mb: 4096
   vcpus: 4
   disk_gb: 30
-  timeout_secs: 900
+  timeout_secs: 1200
 
 pci_passthrough:
   - bdf: "0000:03:00.0"
+    no_flr: true
 
 users:
   - name: reagent
@@ -52,7 +62,133 @@ build_steps:
       echo "nvidia-535 extracted to /opt/nvidia-535"
 
   - type: create_file
-    path: /opt/reagent/capture-mmiotrace.sh
+    path: /opt/reagent/gpu-state.py
+    content: |
+      #!/usr/bin/env python3
+      """Capture GPU BAR0 registers, WPR state, and falcon status to JSON."""
+      import json, mmap, os, struct, sys
+
+      REGISTER_REGIONS = {
+          "PMC":       (0x000000, 0x001000),
+          "PBUS":      (0x001000, 0x002000),
+          "PTIMER":    (0x009000, 0x00A000),
+          "PFB":       (0x100000, 0x101000),
+          "PFIFO":     (0x002000, 0x004000),
+          "PCOPY":     (0x104000, 0x105000),
+          "PMU":       (0x10A000, 0x10B000),
+          "PGRAPH":    (0x400000, 0x402000),
+          "PCLOCK":    (0x137000, 0x138000),
+          "PPCI":      (0x088000, 0x089000),
+          "PROM":      (0x300000, 0x301000),
+          "FECS":      (0x409000, 0x40A000),
+          "GPCCS":     (0x41A000, 0x41B000),
+          "SEC2":      (0x840000, 0x841000),
+          "NVDEC":     (0x848000, 0x849000),
+          "ACR":       (0x862000, 0x863000),
+          "FBPA":      (0x1FA000, 0x1FB000),
+      }
+
+      WPR_REGS = {
+          "PFB_WPR1_BEG": 0x100CE4,
+          "PFB_WPR1_END": 0x100CE8,
+          "PFB_WPR2_BEG": 0x100CEC,
+          "PFB_WPR2_END": 0x100CF0,
+      }
+
+      FALCON_REGS = {
+          "FECS":  {"base": 0x409000, "CPUCTL": 0x100, "SCTL": 0x240,
+                    "MAILBOX0": 0x040, "MAILBOX1": 0x044, "OS": 0x080,
+                    "HWCFG": 0x108, "PC": 0x110, "EXCI": 0x0C8},
+          "GPCCS": {"base": 0x41A000, "CPUCTL": 0x100, "SCTL": 0x240,
+                    "MAILBOX0": 0x040, "MAILBOX1": 0x044, "OS": 0x080,
+                    "HWCFG": 0x108, "PC": 0x110, "EXCI": 0x0C8},
+          "SEC2":  {"base": 0x840000, "CPUCTL": 0x100, "SCTL": 0x240,
+                    "MAILBOX0": 0x040, "MAILBOX1": 0x044, "OS": 0x080,
+                    "HWCFG": 0x108, "PC": 0x110, "EXCI": 0x0C8},
+          "PMU":   {"base": 0x10A000, "CPUCTL": 0x100, "SCTL": 0x240,
+                    "MAILBOX0": 0x040, "MAILBOX1": 0x044, "OS": 0x080,
+                    "HWCFG": 0x108, "PC": 0x110, "EXCI": 0x0C8},
+          "NVDEC": {"base": 0x848000, "CPUCTL": 0x100, "SCTL": 0x240,
+                    "MAILBOX0": 0x040, "MAILBOX1": 0x044, "OS": 0x080,
+                    "HWCFG": 0x108, "PC": 0x110, "EXCI": 0x0C8},
+      }
+
+      def read_u32(mm, offset):
+          try:
+              return struct.unpack_from("<I", mm, offset)[0]
+          except Exception:
+              return 0xDEAD
+
+      def capture(bdf, output_path, label="snapshot"):
+          resource0 = f"/sys/bus/pci/devices/{bdf}/resource0"
+          fd = os.open(resource0, os.O_RDWR | os.O_SYNC)
+          size = os.path.getsize(resource0)
+          mm = mmap.mmap(fd, min(size, 0x02000000), mmap.MAP_SHARED, mmap.PROT_READ)
+
+          result = {"bdf": bdf, "label": label, "regions": {}}
+
+          for name, (start, end) in sorted(REGISTER_REGIONS.items()):
+              regs = {}
+              for offset in range(start, min(end, len(mm)), 4):
+                  val = read_u32(mm, offset)
+                  if val != 0 and val != 0xFFFFFFFF:
+                      regs[f"0x{offset:06x}"] = f"0x{val:08x}"
+              result["regions"][name] = regs
+
+          wpr = {}
+          for name, offset in WPR_REGS.items():
+              val = read_u32(mm, offset)
+              wpr[name] = {"offset": f"0x{offset:06x}", "value": f"0x{val:08x}", "raw": val}
+          wpr2_beg = wpr["PFB_WPR2_BEG"]["raw"]
+          wpr2_end = wpr["PFB_WPR2_END"]["raw"]
+          wpr["configured"] = wpr2_beg != 0 and wpr2_end != 0 and wpr2_end > wpr2_beg
+          result["wpr"] = wpr
+
+          falcons = {}
+          for fname, spec in FALCON_REGS.items():
+              base = spec["base"]
+              f = {}
+              for rname, roff in spec.items():
+                  if rname == "base":
+                      continue
+                  val = read_u32(mm, base + roff)
+                  f[rname] = f"0x{val:08x}"
+              cpuctl = read_u32(mm, base + spec["CPUCTL"])
+              f["halted"] = bool(cpuctl & 0x10)
+              f["running"] = bool(cpuctl & 0x02) or (not (cpuctl & 0x10))
+              falcons[fname] = f
+          result["falcons"] = falcons
+
+          boot0 = read_u32(mm, 0)
+          pmc = read_u32(mm, 0x200)
+          result["summary"] = {
+              "BOOT0": f"0x{boot0:08x}",
+              "PMC_ENABLE": f"0x{pmc:08x}",
+              "PMC_engine_count": bin(pmc).count("1"),
+              "WPR_configured": wpr["configured"],
+          }
+
+          mm.close()
+          os.close(fd)
+
+          with open(output_path, 'w') as f:
+              json.dump(result, f, indent=2)
+
+          print(f"[{label}] BOOT0={boot0:#010x} PMC={pmc:#010x} ({bin(pmc).count('1')} engines)")
+          print(f"[{label}] WPR2: beg={wpr2_beg:#010x} end={wpr2_end:#010x} configured={wpr['configured']}")
+          for fn, fv in falcons.items():
+              print(f"[{label}] {fn}: CPUCTL={fv['CPUCTL']} SCTL={fv['SCTL']} PC={fv['PC']} halted={fv['halted']}")
+
+      if __name__ == "__main__":
+          if len(sys.argv) < 3:
+              print(f"Usage: {sys.argv[0]} <bdf> <output.json> [label]")
+              sys.exit(1)
+          label = sys.argv[3] if len(sys.argv) > 3 else "snapshot"
+          capture(sys.argv[1], sys.argv[2], label)
+    mode: "0755"
+
+  - type: create_file
+    path: /opt/reagent/capture-sovereign.sh
     content: |
       #!/bin/bash
       set -euo pipefail
@@ -67,99 +203,106 @@ build_steps:
       fi
       echo "Found Titan V at $GPU_BDF"
 
-      BAR0=$(cat /sys/bus/pci/devices/$GPU_BDF/resource | head -1 | awk '{print $1}')
-      echo "BAR0 physical address: $BAR0"
+      echo "================================================================"
+      echo "Phase 1: Cold GPU state capture"
+      echo "================================================================"
+      python3 /opt/reagent/gpu-state.py "$GPU_BDF" "$ARTIFACTS/cold_state.json" "cold"
 
-      echo "=== Phase 1: Capture cold BAR0 snapshot ==="
-      python3 /opt/reagent/snapshot-bar0.py "$GPU_BDF" "$ARTIFACTS/cold_bar0.json"
-
-      echo "=== Phase 2: Enable mmiotrace ==="
+      echo ""
+      echo "================================================================"
+      echo "Phase 2: Enable mmiotrace"
+      echo "================================================================"
+      mount -t debugfs debugfs /sys/kernel/debug 2>/dev/null || true
       echo mmiotrace > /sys/kernel/debug/tracing/current_tracer
       echo 1 > /sys/kernel/debug/tracing/tracing_on
       echo "mmiotrace active"
 
-      echo "=== Phase 3: Build and load nvidia-535 module ==="
+      echo ""
+      echo "================================================================"
+      echo "Phase 3: Build and load nvidia-535 module"
+      echo "================================================================"
       cd /opt/nvidia-535
       ./nvidia-installer --kernel-module-only --no-questions --ui=none 2>&1 || true
       modprobe nvidia 2>&1 || true
 
       sleep 5
       echo "nvidia module loaded, waiting for init to settle..."
-      sleep 10
+      sleep 15
 
-      echo "=== Phase 4: Disable mmiotrace, capture trace ==="
+      echo ""
+      echo "================================================================"
+      echo "Phase 4: Disable mmiotrace, capture trace"
+      echo "================================================================"
       echo 0 > /sys/kernel/debug/tracing/tracing_on
       echo nop > /sys/kernel/debug/tracing/current_tracer
       cp /sys/kernel/debug/tracing/trace "$ARTIFACTS/mmiotrace.log"
-      echo "mmiotrace captured: $(wc -l < $ARTIFACTS/mmiotrace.log) lines"
+      LINES=$(wc -l < "$ARTIFACTS/mmiotrace.log")
+      echo "mmiotrace captured: $LINES lines"
 
-      echo "=== Phase 5: Capture warm BAR0 snapshot ==="
-      python3 /opt/reagent/snapshot-bar0.py "$GPU_BDF" "$ARTIFACTS/warm_bar0.json"
+      echo ""
+      echo "================================================================"
+      echo "Phase 5: Warm GPU state capture (nvidia loaded)"
+      echo "================================================================"
+      python3 /opt/reagent/gpu-state.py "$GPU_BDF" "$ARTIFACTS/warm_nvidia_loaded.json" "warm-nvidia-loaded"
 
-      echo "=== Phase 6: Unload nvidia ==="
+      echo ""
+      echo "================================================================"
+      echo "Phase 6: Unload nvidia"
+      echo "================================================================"
       rmmod nvidia_uvm 2>/dev/null || true
       rmmod nvidia_modeset 2>/dev/null || true
       rmmod nvidia 2>/dev/null || true
+      echo "nvidia module unloaded"
+      sleep 2
 
-      echo "=== Capture complete ==="
+      echo ""
+      echo "================================================================"
+      echo "Phase 7: Post-rmmod WPR persistence test"
+      echo "================================================================"
+      python3 /opt/reagent/gpu-state.py "$GPU_BDF" "$ARTIFACTS/post_rmmod_state.json" "post-rmmod"
+
+      echo ""
+      echo "================================================================"
+      echo "Phase 8: WPR persistence verdict"
+      echo "================================================================"
+      python3 -c "
+      import json, sys
+      warm = json.load(open('$ARTIFACTS/warm_nvidia_loaded.json'))
+      post = json.load(open('$ARTIFACTS/post_rmmod_state.json'))
+      warm_wpr = warm.get('wpr', {})
+      post_wpr = post.get('wpr', {})
+      print('--- WPR comparison ---')
+      print(f'nvidia loaded:  WPR2_BEG={warm_wpr.get(\"PFB_WPR2_BEG\",{}).get(\"value\",\"?\")}  WPR2_END={warm_wpr.get(\"PFB_WPR2_END\",{}).get(\"value\",\"?\")}  configured={warm_wpr.get(\"configured\",\"?\")}')
+      print(f'after rmmod:    WPR2_BEG={post_wpr.get(\"PFB_WPR2_BEG\",{}).get(\"value\",\"?\")}  WPR2_END={post_wpr.get(\"PFB_WPR2_END\",{}).get(\"value\",\"?\")}  configured={post_wpr.get(\"configured\",\"?\")}')
+
+      warm_ok = warm_wpr.get('configured', False)
+      post_ok = post_wpr.get('configured', False)
+
+      if warm_ok and post_ok:
+          print('VERDICT: WPR SURVIVES RMMOD — sovereign ACR path viable')
+          verdict = 'WPR_PERSISTS'
+      elif warm_ok and not post_ok:
+          print('VERDICT: WPR DESTROYED BY RMMOD — need PreserveHwState or VM-hold approach')
+          verdict = 'WPR_DESTROYED'
+      elif not warm_ok:
+          print('VERDICT: WPR NEVER CONFIGURED — nvidia did not run PMU DEVINIT')
+          verdict = 'WPR_NEVER_SET'
+      else:
+          print('VERDICT: UNEXPECTED STATE')
+          verdict = 'UNEXPECTED'
+
+      summary = {'verdict': verdict, 'warm_wpr_configured': warm_ok, 'post_rmmod_wpr_configured': post_ok}
+      json.dump(summary, open('$ARTIFACTS/wpr_verdict.json', 'w'), indent=2)
+      print(f'Verdict written to $ARTIFACTS/wpr_verdict.json')
+      "
+
+      echo ""
+      echo "================================================================"
+      echo "Capture complete"
+      echo "================================================================"
       ls -la "$ARTIFACTS/"
+      echo ""
       echo "Artifacts ready for extraction at $ARTIFACTS/"
-    mode: "0755"
-
-  - type: create_file
-    path: /opt/reagent/snapshot-bar0.py
-    content: |
-      #!/usr/bin/env python3
-      """Snapshot GPU BAR0 registers to JSON for diffing (GV100 / Titan V)."""
-      import json, mmap, os, struct, sys
-
-      REGISTER_REGIONS = {
-          "PMC":       (0x000000, 0x001000),
-          "PBUS":      (0x001000, 0x002000),
-          "PTIMER":    (0x009000, 0x00A000),
-          "PFB":       (0x100000, 0x101000),
-          "PFIFO":     (0x002000, 0x004000),
-          "PCOPY":     (0x104000, 0x105000),
-          "PGRAPH":    (0x400000, 0x402000),
-          "PCLOCK":    (0x137000, 0x138000),
-          "PPCI":      (0x088000, 0x089000),
-          "PROM":      (0x300000, 0x301000),
-          "FECS":      (0x409000, 0x40A000),
-          "GPCCS":     (0x41A000, 0x41B000),
-          "SEC2":      (0x840000, 0x841000),
-          "ACR":       (0x862000, 0x863000),
-      }
-
-      def snapshot(bdf, output_path):
-          resource0 = f"/sys/bus/pci/devices/{bdf}/resource0"
-          fd = os.open(resource0, os.O_RDWR | os.O_SYNC)
-          size = os.path.getsize(resource0)
-          mm = mmap.mmap(fd, min(size, 0x01000000), mmap.MAP_SHARED, mmap.PROT_READ)
-
-          result = {"bdf": bdf, "regions": {}}
-          for name, (start, end) in sorted(REGISTER_REGIONS.items()):
-              regs = {}
-              for offset in range(start, min(end, len(mm)), 4):
-                  try:
-                      val = struct.unpack_from("<I", mm, offset)[0]
-                      if val != 0 and val != 0xFFFFFFFF:
-                          regs[f"0x{offset:06x}"] = f"0x{val:08x}"
-                  except Exception:
-                      pass
-              result["regions"][name] = regs
-
-          mm.close()
-          os.close(fd)
-
-          with open(output_path, 'w') as f:
-              json.dump(result, f, indent=2)
-          print(f"Snapshot: {sum(len(v) for v in result['regions'].values())} non-zero registers -> {output_path}")
-
-      if __name__ == "__main__":
-          if len(sys.argv) != 3:
-              print(f"Usage: {sys.argv[0]} <bdf> <output.json>")
-              sys.exit(1)
-          snapshot(sys.argv[1], sys.argv[2])
     mode: "0755"
 
 verification:
@@ -169,8 +312,8 @@ verification:
     - trace-cmd
   required_files:
     - /opt/nvidia-535/nvidia-installer
-    - /opt/reagent/capture-mmiotrace.sh
-    - /opt/reagent/snapshot-bar0.py
+    - /opt/reagent/capture-sovereign.sh
+    - /opt/reagent/gpu-state.py
   verification_commands:
     - command: "lspci -d 10de:1d81"
       expected_exit_code: 0
@@ -179,5 +322,6 @@ verification:
 metadata:
   gpu: "Titan V (GV100)"
   driver: "nvidia-535.183.06"
-  purpose: "reagent-capture"
+  purpose: "sovereign-wpr-capture"
   disposable: "true"
+  experiment: "173"

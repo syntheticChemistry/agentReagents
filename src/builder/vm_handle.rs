@@ -306,6 +306,52 @@ impl VmHandle {
             .context("Network verification failed")
     }
 
+    /// Fetch a file (or directory) from the guest to the host via `scp`.
+    ///
+    /// Uses the same SSH configuration as [`ssh_exec`] (no strict host-key
+    /// checking, error-level logging).  For directories, pass `recursive =
+    /// true` which adds `-r`.
+    pub async fn scp_fetch(
+        &self,
+        user: &str,
+        remote_path: &str,
+        local_path: &std::path::Path,
+        recursive: bool,
+    ) -> Result<()> {
+        if let Some(parent) = local_path.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("failed to create local directory {}", parent.display()))?;
+        }
+
+        let remote_spec = format!("{}@{}:{}", user, self.node.ip_address, remote_path);
+
+        let mut cmd = tokio::process::Command::new("scp");
+        cmd.arg("-o").arg("StrictHostKeyChecking=no")
+            .arg("-o").arg("UserKnownHostsFile=/dev/null")
+            .arg("-o").arg("LogLevel=ERROR");
+
+        if recursive {
+            cmd.arg("-r");
+        }
+
+        cmd.arg(&remote_spec)
+            .arg(local_path.as_os_str());
+
+        let output = cmd.output().await.context("failed to execute scp")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("scp failed (exit {}): {}", output.status.code().unwrap_or(-1), stderr);
+        }
+
+        info!(
+            remote = remote_path,
+            local = %local_path.display(),
+            "fetched artifact from guest"
+        );
+        Ok(())
+    }
+
     /// Delete the VM
     pub async fn delete(self) -> Result<()> {
         info!("Deleting VM: {}", self.node.name);

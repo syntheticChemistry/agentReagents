@@ -138,9 +138,20 @@ async fn execute_post_boot_step(vm: &VmHandle, step: &PostBootStep, username: &s
             destination,
             mode: _,
         } => {
-            info!("  📤 Copying file: {} -> {}", source, destination);
-            // Limitation: no host→guest SCP/rsync path in the builder yet; step is skipped.
-            warn!("     ⚠️  CopyFile not yet implemented, skipping");
+            info!("  Copying file: {} -> {}", source, destination);
+            warn!("     CopyFile (host->guest) not yet implemented, skipping");
+        }
+
+        PostBootStep::FetchFile {
+            remote_path,
+            local_path,
+            recursive,
+        } => {
+            info!("  Fetching artifact: guest:{} -> host:{}", remote_path, local_path);
+            vm.scp_fetch(username, remote_path, std::path::Path::new(local_path), *recursive)
+                .await
+                .with_context(|| format!("Failed to fetch {} from guest", remote_path))?;
+            info!("     Artifact fetched");
         }
 
         PostBootStep::EnableService { service, start } => {
