@@ -145,7 +145,7 @@ impl ImageBuilder {
     pub async fn build(&mut self, ssh_public_key: String) -> Result<BuildResult> {
         let start_time = std::time::Instant::now();
 
-        info!("Starting COSMIC desktop build: {}", self.manifest.name);
+        info!("Starting image build: {}", self.manifest.name);
         self.transition_to(BuildState::Starting);
 
         // Create cloud-init configuration from manifest

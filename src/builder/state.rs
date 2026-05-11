@@ -37,14 +37,14 @@ pub enum BuildState {
         progress: f32,
     },
 
-    /// Installing COSMIC desktop
-    InstallingCosmic {
+    /// Installing desktop environment (manifest-driven)
+    InstallingDesktop {
         /// Approximate progress from 0.0 to 1.0 within this phase.
         progress: f32,
     },
 
-    /// Installing RustDesk
-    InstallingRustDesk,
+    /// Installing additional services (manifest-driven)
+    InstallingServices,
 
     /// Cloud-init completed
     CloudInitComplete,
@@ -86,8 +86,8 @@ impl BuildState {
                 | Self::Monitoring
                 | Self::CloudInitInit
                 | Self::InstallingPackages { .. }
-                | Self::InstallingCosmic { .. }
-                | Self::InstallingRustDesk
+                | Self::InstallingDesktop { .. }
+                | Self::InstallingServices
                 | Self::CloudInitComplete
                 | Self::Verifying
                 | Self::VerifyingNetwork
@@ -125,10 +125,10 @@ impl BuildState {
             Self::InstallingPackages { progress } => {
                 format!("Installing packages ({:.0}%)", progress * 100.0)
             }
-            Self::InstallingCosmic { progress } => {
-                format!("Installing COSMIC desktop ({:.0}%)", progress * 100.0)
+            Self::InstallingDesktop { progress } => {
+                format!("Installing desktop ({:.0}%)", progress * 100.0)
             }
-            Self::InstallingRustDesk => "Installing RustDesk".to_string(),
+            Self::InstallingServices => "Installing services".to_string(),
             Self::CloudInitComplete => "Cloud-init complete".to_string(),
             Self::Verifying => "Verifying installation".to_string(),
             Self::VerifyingNetwork => "Verifying network".to_string(),
@@ -149,8 +149,8 @@ impl BuildState {
             Self::Monitoring => 0.15,
             Self::CloudInitInit => 0.20,
             Self::InstallingPackages { progress } => 0.20 + (progress * 0.30),
-            Self::InstallingCosmic { progress } => 0.50 + (progress * 0.30),
-            Self::InstallingRustDesk => 0.80,
+            Self::InstallingDesktop { progress } => 0.50 + (progress * 0.30),
+            Self::InstallingServices => 0.80,
             Self::CloudInitComplete => 0.85,
             Self::Verifying => 0.90,
             Self::VerifyingNetwork => 0.92,
@@ -257,10 +257,10 @@ mod tests {
 
     #[test]
     fn build_progress_new_sets_network_flag_and_progress() {
-        let state = BuildState::InstallingCosmic { progress: 0.25 };
+        let state = BuildState::InstallingDesktop { progress: 0.25 };
         let mut p = BuildProgress::new(state.clone(), 42);
         assert_eq!(p.elapsed_secs, 42);
-        assert!(p.description.contains("COSMIC"));
+        assert!(p.description.contains("desktop"));
         assert!((p.progress - state.progress()).abs() < f32::EPSILON);
         p.set_network_healthy(true);
         assert!(p.network_healthy);

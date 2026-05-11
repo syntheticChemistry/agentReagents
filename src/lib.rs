@@ -29,7 +29,7 @@
 //! #[tokio::main]
 //! async fn main() -> anyhow::Result<()> {
 //!     let manifest = TemplateManifest {
-//!         name: "cosmic-desktop".to_string(),
+//!         name: "gpu-desktop".to_string(),
 //!         version: "1.0.0".to_string(),
 //!         base_image: "/path/to/ubuntu-24.04.img".to_string(),
 //!         description: None,
