@@ -50,13 +50,16 @@ impl ImageBuilder {
         // Get base image path from manifest
         let base_image = Path::new(&self.manifest.base_image);
 
-        let pci_devices: Vec<benchscale::PciPassthroughDevice> = self
+        let pci_devices: Vec<benchscale::VfioPassthrough> = self
             .manifest
             .pci_passthrough
             .iter()
-            .map(|p| benchscale::PciPassthroughDevice {
-                bdf: p.bdf.clone(),
-                no_flr: p.no_flr,
+            .map(|p| {
+                let legacy = benchscale::PciPassthroughDevice {
+                    bdf: p.bdf.clone(),
+                    no_flr: p.no_flr,
+                };
+                benchscale::VfioPassthrough::from_legacy(&legacy)
             })
             .collect();
 
@@ -271,7 +274,12 @@ impl ImageBuilder {
                 filtered_steps.len()
             );
 
-            post_boot::execute_post_boot_steps(&vm_handle, &filtered_steps, username)
+            post_boot::execute_post_boot_steps_with_pm(
+                &vm_handle,
+                &filtered_steps,
+                username,
+                self.resolved_package_manager(),
+            )
                 .await
                 .context("Failed to execute post-boot steps")?;
             println!("✅ Post-boot synthesis complete!");

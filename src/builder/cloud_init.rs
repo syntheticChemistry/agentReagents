@@ -171,14 +171,16 @@ impl ImageBuilder {
                 BuildStep::CreateFile {
                     path,
                     content,
-                    mode: _,
+                    mode,
                 } => {
-                    // Use heredoc for clean multiline content
-                    let cmd = format!(
+                    let mut cmds = vec![format!(
                         "cat > {} <<'EOFAGENTREAGENTS'\n{}\nEOFAGENTREAGENTS",
                         path, content
-                    );
-                    builder = builder.runcmd(vec![cmd]);
+                    )];
+                    if let Some(m) = mode {
+                        cmds.push(format!("chmod {} {}", m, path));
+                    }
+                    builder = builder.runcmd(cmds);
                 }
                 BuildStep::WaitCloudInit { .. } => {
                     // Handled by monitoring, not cloud-init generation
@@ -209,23 +211,61 @@ impl ImageBuilder {
                         builder = builder.runcmd(vec![format!("curl -fsSL -o {} {}", dest, url)]);
                     }
                 }
-                BuildStep::AddRepository { name, url, key_url } => {
+                BuildStep::AddRepository { name, url, key_url, suite, components } => {
+                    let pm = self.resolved_package_manager();
                     let mut cmds = vec![];
 
-                    // Add key if provided
-                    if let Some(key_url) = key_url {
-                        cmds.push(format!(
-                            "curl -fsSL {} | gpg --dearmor -o /etc/apt/keyrings/{}.gpg",
-                            key_url, name
-                        ));
-                    }
+                    match pm {
+                        crate::templates::PackageManager::Apt | crate::templates::PackageManager::Auto => {
+                            if let Some(key_url) = key_url {
+                                cmds.push(format!(
+                                    "curl -fsSL {} | gpg --dearmor -o /etc/apt/keyrings/{}.gpg",
+                                    key_url, name
+                                ));
+                            }
 
-                    // Add repository (assume noble/24.04 for now, should be configurable)
-                    cmds.push(format!(
-                        "echo 'deb [signed-by=/etc/apt/keyrings/{}.gpg] {} noble main' | tee /etc/apt/sources.list.d/{}.list",
-                        name, url, name
-                    ));
-                    cmds.push("apt-get update".to_string());
+                            let suite_str = suite.as_deref()
+                                .unwrap_or_else(|| Self::infer_suite(&self.manifest.base_image));
+                            let comps = if components.is_empty() {
+                                "main".to_string()
+                            } else {
+                                components.join(" ")
+                            };
+
+                            cmds.push(format!(
+                                "echo 'deb [signed-by=/etc/apt/keyrings/{name}.gpg] {url} {suite} {comps}' | tee /etc/apt/sources.list.d/{name}.list",
+                                name = name, url = url, suite = suite_str, comps = comps,
+                            ));
+                            cmds.push("apt-get update".to_string());
+                        }
+                        crate::templates::PackageManager::Dnf => {
+                            let mut repo = format!(
+                                "[{name}]\nname={name}\nbaseurl={url}\nenabled=1\n",
+                                name = name, url = url,
+                            );
+                            if let Some(key_url) = key_url {
+                                repo.push_str(&format!("gpgcheck=1\ngpgkey={}\n", key_url));
+                            } else {
+                                repo.push_str("gpgcheck=0\n");
+                            }
+                            cmds.push(format!(
+                                "cat > /etc/yum.repos.d/{}.repo <<'EOFREPO'\n{}\nEOFREPO",
+                                name, repo
+                            ));
+                            cmds.push(pm.update_command().to_string());
+                        }
+                        crate::templates::PackageManager::Pacman => {
+                            cmds.push(format!(
+                                "echo -e '\\n[{name}]\\nServer = {url}' >> /etc/pacman.conf",
+                                name = name, url = url,
+                            ));
+                            cmds.push(pm.update_command().to_string());
+                        }
+                        crate::templates::PackageManager::Zypper => {
+                            cmds.push(format!("zypper addrepo {} {}", url, name));
+                            cmds.push(pm.update_command().to_string());
+                        }
+                    }
 
                     builder = builder.runcmd(cmds);
                 }
@@ -362,6 +402,7 @@ mod tests {
                 static_ip: None,
             },
             pci_passthrough: vec![],
+            package_manager: crate::templates::PackageManager::default(),
             users: vec![UserConfig {
                 name: "u".to_string(),
                 password: None,

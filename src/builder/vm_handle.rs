@@ -5,14 +5,19 @@
 
 use anyhow::{Context, Result};
 use benchscale::backend::{Backend, LibvirtBackend, NodeInfo};
+use benchscale::SshClient;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::Duration;
-use tracing::{debug, info};
+use tokio::sync::Mutex;
+use tracing::{debug, info, warn};
 
 /// Handle to a running VM
 pub struct VmHandle {
     backend: LibvirtBackend,
     node: NodeInfo,
+    /// Lazily initialized russh session (replaces ssh/scp CLI).
+    ssh_session: Arc<Mutex<Option<SshClient>>>,
 }
 
 /// Cloud-init status from SSH query
@@ -30,8 +35,34 @@ pub struct CloudInitStatusInfo {
 
 impl VmHandle {
     /// Create a new VM handle
-    pub const fn new(backend: LibvirtBackend, node: NodeInfo) -> Self {
-        Self { backend, node }
+    pub fn new(backend: LibvirtBackend, node: NodeInfo) -> Self {
+        Self {
+            backend,
+            node,
+            ssh_session: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Get or create a persistent SSH session via russh.
+    ///
+    /// The session is cached in `self.ssh_session` so that repeated
+    /// calls reuse the same connection instead of spawning a new
+    /// `ssh` CLI process each time.
+    async fn get_or_connect_ssh(&self, user: &str) -> Result<()> {
+        let mut guard = self.ssh_session.lock().await;
+        if guard.is_none() {
+            debug!("Opening russh session to {}@{}", user, self.node.ip_address);
+            let client = SshClient::connect_with_key(
+                &self.node.ip_address,
+                22,
+                user,
+                None,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("russh connect failed: {}", e))?;
+            *guard = Some(client);
+        }
+        Ok(())
     }
 
     /// Get the VM's IP address
@@ -59,38 +90,53 @@ impl VmHandle {
         &self.node
     }
 
-    /// Execute a command via SSH
+    /// Execute a command via SSH using a persistent russh session.
     ///
-    /// # Implementation Note
+    /// The first call lazily connects via key-based auth. Subsequent
+    /// calls reuse the same session, avoiding the overhead of spawning
+    /// a new `ssh` CLI process for every command.
     ///
-    /// This uses the system `ssh` command via tokio::process rather than
-    /// a Rust SSH library. This is a deliberate design choice:
-    ///
-    /// - **Simplicity**: Leverages system SSH with established security
-    /// - **Key Management**: Uses system SSH agent and known_hosts
-    /// - **Compatibility**: Works with any SSH configuration
-    /// - **Zero Dependencies**: No additional SSH library dependencies
-    ///
-    /// This is a deep debt solution that prioritizes reliability and
-    /// simplicity over pure-Rust implementation. For more advanced SSH
-    /// needs, consider benchScale exposing ssh_exec on LibvirtBackend.
-    ///
-    /// # Evolution #18: Robust SSH Error Handling
-    ///
-    /// Now filters SSH warnings from error messages to prevent false negatives
-    /// in verification checks. SSH warnings (like "Permanently added...") are
-    /// informational and don't indicate actual command failures.
+    /// Falls back to the system `ssh` CLI if russh fails to connect
+    /// (e.g., when the SSH key is passphrase-protected and no agent is
+    /// available).
     pub async fn ssh_exec(&self, user: &str, cmd: &str) -> Result<String> {
         debug!("Executing SSH command on {}: {}", self.node.name, cmd);
 
-        // Use system SSH command for maximum compatibility
+        // Try russh first
+        if let Err(e) = self.get_or_connect_ssh(user).await {
+            warn!("russh session unavailable ({}), falling back to ssh CLI", e);
+            return self.ssh_exec_cli(user, cmd).await;
+        }
+
+        let mut guard = self.ssh_session.lock().await;
+        if let Some(ref mut client) = *guard {
+            match client.exec_stdout(cmd).await {
+                Ok(stdout) => return Ok(stdout),
+                Err(e) => {
+                    warn!("russh exec failed ({}), reconnecting...", e);
+                    *guard = None;
+                    drop(guard);
+                    // One retry after reconnect
+                    if self.get_or_connect_ssh(user).await.is_ok() {
+                        let mut g2 = self.ssh_session.lock().await;
+                        if let Some(ref mut c) = *g2 {
+                            return c.exec_stdout(cmd).await
+                                .map_err(|e| anyhow::anyhow!("russh exec failed after reconnect: {}", e));
+                        }
+                    }
+                }
+            }
+        }
+
+        self.ssh_exec_cli(user, cmd).await
+    }
+
+    /// Fallback: execute via system `ssh` CLI.
+    async fn ssh_exec_cli(&self, user: &str, cmd: &str) -> Result<String> {
         let output = tokio::process::Command::new("ssh")
-            .arg("-o")
-            .arg("StrictHostKeyChecking=no")
-            .arg("-o")
-            .arg("UserKnownHostsFile=/dev/null")
-            .arg("-o")
-            .arg("LogLevel=ERROR") // Evolution #18: Suppress warnings in stderr
+            .arg("-o").arg("StrictHostKeyChecking=no")
+            .arg("-o").arg("UserKnownHostsFile=/dev/null")
+            .arg("-o").arg("LogLevel=ERROR")
             .arg(format!("{}@{}", user, self.node.ip_address))
             .arg(cmd)
             .output()
@@ -98,18 +144,12 @@ impl VmHandle {
             .context("Failed to execute SSH command")?;
 
         if !output.status.success() {
-            // Evolution #18: Filter SSH warnings from error message
             let stderr = String::from_utf8_lossy(&output.stderr);
             let filtered_error = Self::filter_ssh_warnings(&stderr);
-
             anyhow::bail!(
                 "Command failed with exit code {}: {}",
                 output.status.code().unwrap_or(-1),
-                if filtered_error.is_empty() {
-                    "Command returned non-zero exit code"
-                } else {
-                    filtered_error.as_str()
-                }
+                if filtered_error.is_empty() { "Command returned non-zero exit code" } else { filtered_error.as_str() }
             );
         }
 
@@ -306,11 +346,11 @@ impl VmHandle {
             .context("Network verification failed")
     }
 
-    /// Fetch a file (or directory) from the guest to the host via `scp`.
+    /// Fetch a file from the guest to the host via russh.
     ///
-    /// Uses the same SSH configuration as [`ssh_exec`] (no strict host-key
-    /// checking, error-level logging).  For directories, pass `recursive =
-    /// true` which adds `-r`.
+    /// For single files, reads the remote file through the SSH channel
+    /// (base64-encoded) and writes it locally. Falls back to the `scp`
+    /// CLI for recursive directory copies.
     pub async fn scp_fetch(
         &self,
         user: &str,
@@ -323,32 +363,103 @@ impl VmHandle {
                 .with_context(|| format!("failed to create local directory {}", parent.display()))?;
         }
 
-        let remote_spec = format!("{}@{}:{}", user, self.node.ip_address, remote_path);
+        if recursive {
+            return self.scp_fetch_cli(user, remote_path, local_path, true).await;
+        }
 
+        // Try russh channel transfer
+        if self.get_or_connect_ssh(user).await.is_ok() {
+            let mut guard = self.ssh_session.lock().await;
+            if let Some(ref mut client) = *guard {
+                match client.fetch_data(remote_path).await {
+                    Ok(data) => {
+                        std::fs::write(local_path, &data)
+                            .with_context(|| format!("failed to write {}", local_path.display()))?;
+                        info!(remote = remote_path, local = %local_path.display(), "fetched via russh");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!("russh fetch failed ({}), falling back to scp CLI", e);
+                    }
+                }
+            }
+        }
+
+        self.scp_fetch_cli(user, remote_path, local_path, false).await
+    }
+
+    /// Fallback: fetch via system `scp` CLI.
+    async fn scp_fetch_cli(
+        &self, user: &str, remote_path: &str,
+        local_path: &std::path::Path, recursive: bool,
+    ) -> Result<()> {
+        let remote_spec = format!("{}@{}:{}", user, self.node.ip_address, remote_path);
         let mut cmd = tokio::process::Command::new("scp");
         cmd.arg("-o").arg("StrictHostKeyChecking=no")
             .arg("-o").arg("UserKnownHostsFile=/dev/null")
             .arg("-o").arg("LogLevel=ERROR");
-
-        if recursive {
-            cmd.arg("-r");
-        }
-
-        cmd.arg(&remote_spec)
-            .arg(local_path.as_os_str());
-
+        if recursive { cmd.arg("-r"); }
+        cmd.arg(&remote_spec).arg(local_path.as_os_str());
         let output = cmd.output().await.context("failed to execute scp")?;
-
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!("scp failed (exit {}): {}", output.status.code().unwrap_or(-1), stderr);
         }
+        info!(remote = remote_path, local = %local_path.display(), "fetched via scp CLI");
+        Ok(())
+    }
 
-        info!(
-            remote = remote_path,
-            local = %local_path.display(),
-            "fetched artifact from guest"
-        );
+    /// Push a file from the host to the guest via russh.
+    ///
+    /// Reads the local file, transfers it through the SSH channel
+    /// (base64-encoded), and writes it on the guest. Falls back to
+    /// the `scp` CLI on failure.
+    pub async fn scp_push(
+        &self,
+        user: &str,
+        local_path: &std::path::Path,
+        remote_path: &str,
+    ) -> Result<()> {
+        let data = std::fs::read(local_path)
+            .with_context(|| format!("failed to read {}", local_path.display()))?;
+
+        if self.get_or_connect_ssh(user).await.is_ok() {
+            let mut guard = self.ssh_session.lock().await;
+            if let Some(ref mut client) = *guard {
+                match client.push_data(&data, remote_path).await {
+                    Ok(()) => {
+                        info!(local = %local_path.display(), remote = remote_path, "pushed via russh");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!("russh push failed ({}), falling back to scp CLI", e);
+                    }
+                }
+            }
+        }
+
+        self.scp_push_cli(local_path, user, remote_path).await
+    }
+
+    /// Fallback: push via system `scp` CLI.
+    async fn scp_push_cli(
+        &self, local_path: &std::path::Path, user: &str, remote_path: &str,
+    ) -> Result<()> {
+        let remote_spec = format!("{}@{}:{}", user, self.node.ip_address, remote_path);
+        let output = tokio::process::Command::new("scp")
+            .arg("-o").arg("StrictHostKeyChecking=no")
+            .arg("-o").arg("UserKnownHostsFile=/dev/null")
+            .arg("-o").arg("LogLevel=ERROR")
+            .arg(local_path.as_os_str())
+            .arg(&remote_spec)
+            .output()
+            .await
+            .context("failed to execute scp")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("scp push failed (exit {}): {}", output.status.code().unwrap_or(-1), stderr);
+        }
+        info!(local = %local_path.display(), remote = remote_path, "pushed via scp CLI");
         Ok(())
     }
 

@@ -1,41 +1,23 @@
 #!/usr/bin/env bash
-# k80_nvidia470_mmiotrace.sh — Capture nvidia-470 driver's K80 init via mmiotrace.
+# k80_nvidia470_mmiotrace.sh — Host-side mmiotrace of nvidia-470 initializing K80.
 #
-# The proprietary driver (nvidia-470) successfully initializes GPCs on K80/GK210B
-# while both Nouveau and our Rust code fail (GPCs return 0xbadf1100 PRI fault).
-# This script captures the exact register write sequence used by nvidia-470 to
-# ungate GPC power domains, including:
-#   - PMU PGOB sequence (may use different registers than GK110's 0x0205xx)
-#   - PRI ring station configuration
-#   - PGRAPH engine initialization
-#   - FECS/GPCCS firmware loading
+# Swaps nvidia-580 → nvidia-470 under mmiotrace, captures K80 GPC init, swaps back.
+# Display goes dark for ~30 seconds during the swap.
 #
-# The captured mmiotrace is filtered to extract GPC-power-related registers
-# and stored alongside the raw trace for analysis.
+# Usage: sudo ./k80_nvidia470_mmiotrace.sh
 #
-# Prerequisites:
-#   - nvidia-470 .run installer or .deb packages available
-#   - K80 die1 at 0000:4d:00.0 (or adjust BDF below)
-#   - mmiotrace kernel support (CONFIG_MMIOTRACE=y, usually built-in)
-#
-# Usage:
-#   sudo ./k80_nvidia470_mmiotrace.sh
-#
-# Output:
-#   artifacts/k80_nvidia470_mmiotrace_YYYYMMDD_HHMMSS/
-#     raw_trace.log        — full mmiotrace
-#     pgob_filter.log      — PGOB-related registers (0x0205xx, 0x10a78c, PMC)
-#     gr_filter.log        — GR engine registers (0x4xxxxx, 0x5xxxxx)
-#     pri_filter.log       — PRI ring registers (0x12xxxx)
-#     power_filter.log     — Power management (0x020xxx, 0x10axxx, PMC 0x200)
-#     pre_registers.json   — BAR0 register snapshot BEFORE driver load
-#     post_registers.json  — BAR0 register snapshot AFTER driver load
-#     dmesg.log            — kernel log during capture
+# Artifacts saved to: artifacts/k80_nvidia470_mmiotrace_<timestamp>/
 
 set -euo pipefail
 
-K80_BDF="${K80_BDF:-0000:4d:00.0}"
-ARTIFACTS="$(dirname "$0")/artifacts/k80_nvidia470_mmiotrace_$(date +%Y%m%d_%H%M%S)"
+K80_DIE0="0000:4c:00.0"
+K80_DIE1="0000:4d:00.0"
+GPU_5060="0000:21:00.0"
+GPU_5060_AUD="0000:21:00.1"
+NV470="/var/lib/dkms/nvidia/470.256.02/$(uname -r)/x86_64/module/nvidia.ko"
+TRACEDIR="/sys/kernel/tracing"
+SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+ARTIFACTS="$SCRIPT_DIR/artifacts/k80_nvidia470_mmiotrace_$(date +%Y%m%d_%H%M%S)"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
 log()  { echo -e "${CYAN}[mmio]${NC} $*"; }
@@ -43,188 +25,159 @@ ok()   { echo -e "${GREEN}[OK]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 fail() { echo -e "${RED}[FAIL]${NC} $*"; exit 1; }
 
+restore_nvidia580() {
+    log "Restoring nvidia-580..."
+    echo 0 > "$TRACEDIR/tracing_on" 2>/dev/null || true
+    echo nop > "$TRACEDIR/current_tracer" 2>/dev/null || true
+    rmmod nvidia 2>/dev/null || true
+    sleep 1
+    modprobe nvidia 2>/dev/null || warn "Could not reload nvidia-580"
+    modprobe nvidia_modeset 2>/dev/null || true
+    modprobe nvidia_drm 2>/dev/null || true
+    modprobe nvidia_uvm 2>/dev/null || true
+    sleep 2
+    systemctl start gdm 2>/dev/null || \
+    systemctl start cosmic-greeter 2>/dev/null || \
+    warn "Restart display manager manually"
+}
+
 [[ $EUID -eq 0 ]] || fail "Must run as root"
-[[ -d "/sys/bus/pci/devices/$K80_BDF" ]] || fail "$K80_BDF not found"
+[[ -f "$NV470" ]] || fail "nvidia-470 module not found: $NV470"
 
 mkdir -p "$ARTIFACTS"
 log "Artifacts: $ARTIFACTS"
-log "K80 BDF: $K80_BDF"
+log "nvidia-470: $NV470"
 
-gpu_read() {
-    python3 -c "
-import mmap, struct
-f = open('/sys/bus/pci/devices/$K80_BDF/resource0', 'r+b')
-mm = mmap.mmap(f.fileno(), 0x1000000)
-mm.seek(int('$1', 0))
-v = struct.unpack('<I', mm.read(4))[0]
-print(f'{v:#010x}')
-mm.close(); f.close()
-" 2>/dev/null || echo "0xDEADDEAD"
-}
+trap restore_nvidia580 EXIT
 
-# ── Snapshot registers BEFORE nvidia-470 loads ──
-log "Capturing pre-driver register snapshot..."
+DMESG_MARK=$(dmesg | wc -l)
+
+# ── Phase 1: Pre-capture BAR0 snapshot ──
+log "Phase 1: Cold BAR0 snapshot..."
 python3 -c "
-import mmap, struct, json
+import mmap,struct,json,os
+bdf='$K80_DIE0';res=f'/sys/bus/pci/devices/{bdf}/resource0'
+try:
+    fd=os.open(res,os.O_RDONLY|os.O_SYNC);mm=mmap.mmap(fd,0x1000000,mmap.MAP_SHARED,mmap.PROT_READ)
+    def rd(r):mm.seek(r);return struct.unpack('<I',mm.read(4))[0]
+    regs={n:f'{rd(a):#010x}' for n,a in [('BOOT0',0),('PMC_ENABLE',0x200),('PMU_CPUCTL',0x10a100),('PRI_NSTATIONS',0x120070),('PRI_NGPC',0x120074),('GPC0_ID',0x500000),('GR_HUB',0x400000),('FECS_CPUCTL',0x409100),('GPCCS_CPUCTL',0x41a100),('PMU_PGOB',0x10a78c),('THERM_CTRL1',0x020004),('PPWR_0520',0x020520)]}
+    mm.close();os.close(fd)
+    with open('$ARTIFACTS/cold_bar0.json','w') as f:json.dump(regs,f,indent=2)
+    for k,v in regs.items(): print(f'  {k}: {v}')
+except Exception as e:
+    print(f'  Error: {e}')
+" 2>&1
 
-bdf = '$K80_BDF'
-f = open(f'/sys/bus/pci/devices/{bdf}/resource0', 'r+b')
-mm = mmap.mmap(f.fileno(), 0x1000000)
+# ── Phase 2: Stop display manager + unload nvidia-580 ──
+log "Phase 2: Stopping display manager..."
+systemctl stop gdm 2>/dev/null || systemctl stop cosmic-greeter 2>/dev/null || true
+sleep 3
 
-def rd(reg):
-    mm.seek(reg)
-    return struct.unpack('<I', mm.read(4))[0]
+log "Phase 2: Unloading nvidia-580..."
+rmmod nvidia_uvm 2>/dev/null || true
+rmmod nvidia_drm 2>/dev/null || true
+rmmod nvidia_modeset 2>/dev/null || true
+rmmod nvidia 2>/dev/null || true
+sleep 1
 
-regs = {}
-# PMC / power / PRI
-for name, addr in [
-    ('PMC_ENABLE', 0x200), ('PMC_INTR', 0x100), ('PMC_INTR_EN', 0x140),
-    ('PMU_CPUCTL', 0x10a100), ('PMU_PGOB', 0x10a78c), ('PMU_MAILBOX0', 0x10a040),
-    ('PPWR_0520', 0x020520), ('PPWR_0524', 0x020524), ('PPWR_0528', 0x020528),
-    ('PPWR_052C', 0x02052c), ('PPWR_0530', 0x020530), ('PPWR_06B4', 0x0206b4),
-    ('THERM_CTRL1', 0x20004), ('PRI_RING_CMD', 0x12004c),
-    ('PRI_RING_STATUS', 0x120058), ('PRI_NSTATIONS', 0x120070),
-    ('PRI_NGPC', 0x120074), ('BOOT0', 0x0),
-    ('GPC0_ID', 0x500000), ('GPC0_TPC', 0x502608), ('GPC1_ID', 0x508000),
-    ('GR_HUB_0', 0x400000), ('FECS_CPUCTL', 0x409100), ('FECS_PC', 0x409030),
-    ('GPCCS_CPUCTL', 0x41a100), ('PLL0_CTRL', 0x130000), ('PLL0_COEF', 0x130004),
-]:
-    try:
-        regs[name] = f'{rd(addr):#010x}'
-    except Exception:
-        regs[name] = 'ERROR'
-
-mm.close(); f.close()
-with open('$ARTIFACTS/pre_registers.json', 'w') as out:
-    json.dump(regs, out, indent=2)
-print(json.dumps(regs, indent=2))
-" 2>&1 | log "Pre-snapshot:"
-log "$(cat "$ARTIFACTS/pre_registers.json" 2>/dev/null | head -5)..."
-
-# ── Unbind current driver ──
-SYSFS="/sys/bus/pci/devices/$K80_BDF"
-if [[ -L "$SYSFS/driver" ]]; then
-    DRV="$(basename "$(readlink "$SYSFS/driver")")"
-    log "Unbinding $K80_BDF from $DRV"
-    echo "$K80_BDF" > "/sys/bus/pci/drivers/$DRV/unbind"
-    echo "" > "$SYSFS/driver_override"
+if lsmod | grep -q '^nvidia '; then
+    fuser -k /dev/nvidia* 2>/dev/null || true
     sleep 2
+    rmmod nvidia_uvm nvidia_drm nvidia_modeset nvidia 2>/dev/null || \
+        fail "Could not unload nvidia-580"
 fi
+ok "nvidia-580 unloaded"
 
-# ── Enable mmiotrace ──
-log "Enabling mmiotrace..."
-DEBUGFS="/sys/kernel/debug/tracing"
-
-echo mmiotrace > "$DEBUGFS/current_tracer" 2>/dev/null || fail "mmiotrace not available"
-echo > "$DEBUGFS/trace"
-echo 1 > "$DEBUGFS/tracing_on"
-ok "mmiotrace enabled"
-
-# ── Load nvidia-470 driver ──
-# Try modprobe first, fall back to instructions
-log "Loading nvidia-470 driver..."
-DMESG_START=$(dmesg | wc -l)
-
-if modprobe nvidia 2>/dev/null; then
-    ok "nvidia module loaded"
-    sleep 5
-    # Probe the K80
-    echo "$K80_BDF" > "/sys/bus/pci/drivers_probe" 2>/dev/null || true
-    sleep 10
-
-    log "Checking if nvidia claimed $K80_BDF..."
-    if [[ -L "$SYSFS/driver" ]]; then
-        DRV="$(basename "$(readlink "$SYSFS/driver")")"
-        log "$K80_BDF driver: $DRV"
+# ── Phase 3: Unbind K80 from vfio-pci ──
+log "Phase 3: Unbinding K80 from vfio-pci..."
+for dev in "$K80_DIE0" "$K80_DIE1"; do
+    if [[ -L "/sys/bus/pci/devices/$dev/driver" ]]; then
+        DRV=$(basename "$(readlink "/sys/bus/pci/devices/$dev/driver")")
+        echo "$dev" > "/sys/bus/pci/drivers/$DRV/unbind" 2>/dev/null || true
+        echo "" > "/sys/bus/pci/devices/$dev/driver_override" 2>/dev/null || true
     fi
+done
+sleep 1
+ok "K80 unbound"
 
-    # Run nvidia-smi to force full init (including GR)
-    nvidia-smi -i "$K80_BDF" 2>&1 | head -5 | while IFS= read -r line; do log "  $line"; done || true
-    sleep 5
-else
-    warn "nvidia module not available — install nvidia-470 first:"
-    warn "  apt install nvidia-driver-470"
-    warn "  OR: sh NVIDIA-Linux-x86_64-470.xx.xx.run --no-install --no-kernel-module"
-    warn ""
-    warn "Capturing what we have so far..."
-fi
+# ── Phase 4: Enable mmiotrace ──
+log "Phase 4: Enabling mmiotrace..."
+echo mmiotrace > "$TRACEDIR/current_tracer"
+echo > "$TRACEDIR/trace"
+echo 1 > "$TRACEDIR/tracing_on"
+ok "mmiotrace active"
 
-# ── Stop mmiotrace and capture ──
-log "Stopping mmiotrace..."
-echo 0 > "$DEBUGFS/tracing_on"
-cat "$DEBUGFS/trace" > "$ARTIFACTS/raw_trace.log"
-echo nop > "$DEBUGFS/current_tracer"
-ok "Raw trace: $(wc -l < "$ARTIFACTS/raw_trace.log") lines"
+# ── Phase 5: Load nvidia-470 ──
+log "Phase 5: Loading nvidia-470..."
+insmod "$NV470" 2>&1 || fail "Could not load nvidia-470"
+sleep 3
+ok "nvidia-470 loaded"
 
-# ── Capture dmesg ──
-dmesg | tail -n +"$DMESG_START" > "$ARTIFACTS/dmesg.log"
+# ── Phase 6: Wait for K80 probe + init ──
+log "Phase 6: Probing K80..."
+for dev in "$K80_DIE0" "$K80_DIE1"; do
+    echo "$dev" > /sys/bus/pci/drivers_probe 2>/dev/null || true
+done
+sleep 3
 
-# ── Filter trace for relevant registers ──
-log "Filtering trace..."
+for dev in "$K80_DIE0" "$K80_DIE1"; do
+    if [[ -L "/sys/bus/pci/devices/$dev/driver" ]]; then
+        DRV=$(basename "$(readlink "/sys/bus/pci/devices/$dev/driver")")
+        ok "$dev -> $DRV"
+    else
+        warn "$dev not claimed, trying explicit bind..."
+        echo "$dev" > /sys/bus/pci/drivers/nvidia/bind 2>/dev/null || true
+    fi
+done
+sleep 5
 
-# PGOB / power domain registers
-rg -i '0205[0-9a-f]{2}\b|010a78c\b|000200\b|020004\b' \
-    "$ARTIFACTS/raw_trace.log" > "$ARTIFACTS/power_filter.log" 2>/dev/null || true
+log "Phase 6: Triggering full GPU init..."
+nvidia-smi 2>&1 | head -8 || warn "nvidia-smi failed"
+sleep 5
+
+# ── Phase 7: Stop mmiotrace + capture ──
+log "Phase 7: Capturing mmiotrace..."
+echo 0 > "$TRACEDIR/tracing_on"
+cat "$TRACEDIR/trace" > "$ARTIFACTS/mmiotrace.log"
+echo nop > "$TRACEDIR/current_tracer"
+TRACE_LINES=$(wc -l < "$ARTIFACTS/mmiotrace.log")
+ok "mmiotrace: $TRACE_LINES lines"
+
+# ── Phase 8: Post-capture BAR0 ──
+log "Phase 8: Warm BAR0 snapshot..."
+python3 -c "
+import mmap,struct,json,os
+bdf='$K80_DIE0';res=f'/sys/bus/pci/devices/{bdf}/resource0'
+try:
+    fd=os.open(res,os.O_RDONLY|os.O_SYNC);mm=mmap.mmap(fd,0x1000000,mmap.MAP_SHARED,mmap.PROT_READ)
+    def rd(r):mm.seek(r);return struct.unpack('<I',mm.read(4))[0]
+    regs={n:f'{rd(a):#010x}' for n,a in [('BOOT0',0),('PMC_ENABLE',0x200),('PMU_CPUCTL',0x10a100),('PRI_NSTATIONS',0x120070),('PRI_NGPC',0x120074),('GPC0_ID',0x500000),('GR_HUB',0x400000),('FECS_CPUCTL',0x409100),('GPCCS_CPUCTL',0x41a100),('PMU_PGOB',0x10a78c),('THERM_CTRL1',0x020004),('PPWR_0520',0x020520)]}
+    mm.close();os.close(fd)
+    with open('$ARTIFACTS/warm_bar0.json','w') as f:json.dump(regs,f,indent=2)
+    for k,v in regs.items(): print(f'  {k}: {v}')
+except Exception as e:
+    print(f'  Error: {e}')
+" 2>&1
+
+# ── Phase 9: Capture dmesg + filter trace ──
+log "Phase 9: Filtering and saving..."
+dmesg | tail -n +$((DMESG_MARK + 1)) > "$ARTIFACTS/dmesg.log" 2>/dev/null || dmesg > "$ARTIFACTS/dmesg.log"
+
+grep -iE '020[0-9a-f]{3}|10a[0-9a-f]{3}' "$ARTIFACTS/mmiotrace.log" > "$ARTIFACTS/power_filter.log" 2>/dev/null || true
+grep -iE '4[0-9a-f]{5}|5[0-3][0-9a-f]{4}|41[89a-f][0-9a-f]{3}' "$ARTIFACTS/mmiotrace.log" > "$ARTIFACTS/gr_filter.log" 2>/dev/null || true
+grep -iE '12[0-9a-f]{4}' "$ARTIFACTS/mmiotrace.log" > "$ARTIFACTS/pri_filter.log" 2>/dev/null || true
+
 ok "Power filter: $(wc -l < "$ARTIFACTS/power_filter.log") lines"
-
-# GR engine registers (PGRAPH HUB + GPC)
-rg -i '004[0-9a-f]{4}\b|005[0-3][0-9a-f]{4}\b|0041[89a-f][0-9a-f]{3}\b' \
-    "$ARTIFACTS/raw_trace.log" > "$ARTIFACTS/gr_filter.log" 2>/dev/null || true
 ok "GR filter: $(wc -l < "$ARTIFACTS/gr_filter.log") lines"
-
-# PRI ring registers
-rg -i '0012[0-9a-f]{4}\b|0013[0-3][0-9a-f]{3}\b' \
-    "$ARTIFACTS/raw_trace.log" > "$ARTIFACTS/pri_filter.log" 2>/dev/null || true
 ok "PRI filter: $(wc -l < "$ARTIFACTS/pri_filter.log") lines"
 
-# ── Post-driver register snapshot ──
-log "Capturing post-driver register snapshot..."
-python3 -c "
-import mmap, struct, json
-
-bdf = '$K80_BDF'
-try:
-    f = open(f'/sys/bus/pci/devices/{bdf}/resource0', 'r+b')
-    mm = mmap.mmap(f.fileno(), 0x1000000)
-    def rd(reg):
-        mm.seek(reg)
-        return struct.unpack('<I', mm.read(4))[0]
-
-    regs = {}
-    for name, addr in [
-        ('PMC_ENABLE', 0x200), ('PMU_CPUCTL', 0x10a100), ('PMU_PGOB', 0x10a78c),
-        ('PPWR_0520', 0x020520), ('PPWR_0524', 0x020524), ('PPWR_0528', 0x020528),
-        ('PPWR_052C', 0x02052c), ('PPWR_0530', 0x020530),
-        ('PRI_NSTATIONS', 0x120070), ('PRI_NGPC', 0x120074),
-        ('GPC0_ID', 0x500000), ('GPC0_TPC', 0x502608), ('GPC1_ID', 0x508000),
-        ('GR_HUB_0', 0x400000), ('FECS_CPUCTL', 0x409100), ('FECS_PC', 0x409030),
-        ('GPCCS_CPUCTL', 0x41a100),
-    ]:
-        try:
-            regs[name] = f'{rd(addr):#010x}'
-        except Exception:
-            regs[name] = 'ERROR'
-    mm.close(); f.close()
-    with open('$ARTIFACTS/post_registers.json', 'w') as out:
-        json.dump(regs, out, indent=2)
-    print(json.dumps(regs, indent=2))
-except Exception as e:
-    print(f'Could not read registers: {e}')
-" 2>&1 | while IFS= read -r line; do log "  $line"; done
-
-# ── Clean up nvidia driver ──
-if grep -q '^nvidia ' /proc/modules 2>/dev/null; then
-    log "Unloading nvidia driver..."
-    rmmod nvidia_uvm 2>/dev/null || true
-    rmmod nvidia_drm 2>/dev/null || true
-    rmmod nvidia_modeset 2>/dev/null || true
-    rmmod nvidia 2>/dev/null || true
-fi
+# ── Phase 10: Unload nvidia-470, EXIT trap restores nvidia-580 ──
+log "Phase 10: Unloading nvidia-470..."
+rmmod nvidia 2>/dev/null || true
 
 echo ""
 ok "════════════════════════════════════════════════════════"
 ok "  mmiotrace capture complete"
 ok "  Artifacts: $ARTIFACTS"
-ok "  Key file: power_filter.log (PGOB + PMC sequence)"
-ok "  Compare with: kernel gk110_pmu_pgob() at 0x0205xx"
+ok "  Raw trace: $TRACE_LINES lines"
 ok "════════════════════════════════════════════════════════"

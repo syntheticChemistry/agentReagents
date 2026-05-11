@@ -8,7 +8,8 @@ pub mod manifest;
 mod registry;
 
 pub use manifest::{
-    BuildStep, PostBootStep, ResourceConfig, TemplateManifest, UserConfig, VerificationConfig,
+    BuildStep, PackageManager, PostBootStep, RepositoryConfig, ResourceConfig, TemplateManifest,
+    UserConfig, VerificationConfig,
 };
 pub use registry::{RegistryError, TemplateRegistry};
 

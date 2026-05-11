@@ -19,19 +19,36 @@ pub async fn execute_post_boot_steps(
     steps: &[PostBootStep],
     username: &str,
 ) -> Result<()> {
+    execute_post_boot_steps_with_pm(
+        vm,
+        steps,
+        username,
+        crate::templates::PackageManager::Apt,
+    )
+    .await
+}
+
+/// Execute all post-boot steps on a VM with a specific package manager.
+#[tracing::instrument(skip(vm, steps))]
+pub async fn execute_post_boot_steps_with_pm(
+    vm: &VmHandle,
+    steps: &[PostBootStep],
+    username: &str,
+    pm: crate::templates::PackageManager,
+) -> Result<()> {
     if steps.is_empty() {
         info!("No post-boot steps to execute");
         return Ok(());
     }
 
     info!(
-        "🧪 Executing {} post-boot steps (laboratory stepwise synthesis)",
-        steps.len()
+        "Executing {} post-boot steps (package manager: {:?})",
+        steps.len(), pm
     );
 
     for (idx, step) in steps.iter().enumerate() {
         info!("  Step {}/{}: {:?}", idx + 1, steps.len(), step);
-        execute_post_boot_step(vm, step, username)
+        execute_post_boot_step(vm, step, username, pm)
             .await
             .with_context(|| {
                 format!(
@@ -42,7 +59,7 @@ pub async fn execute_post_boot_steps(
             })?;
     }
 
-    info!("✅ All post-boot steps completed successfully");
+    info!("All post-boot steps completed successfully");
     Ok(())
 }
 
@@ -51,7 +68,12 @@ pub async fn execute_post_boot_steps(
     clippy::too_many_lines,
     reason = "Large match on PostBootStep variants and SSH paths"
 )]
-async fn execute_post_boot_step(vm: &VmHandle, step: &PostBootStep, username: &str) -> Result<()> {
+async fn execute_post_boot_step(
+    vm: &VmHandle,
+    step: &PostBootStep,
+    username: &str,
+    pm: crate::templates::PackageManager,
+) -> Result<()> {
     match step {
         PostBootStep::InstallPackages {
             packages,
@@ -60,35 +82,34 @@ async fn execute_post_boot_step(vm: &VmHandle, step: &PostBootStep, username: &s
             description,
         } => {
             if let Some(desc) = description {
-                info!("  📦 {}", desc);
+                info!("  {}", desc);
             }
             info!(
-                "     Installing {} packages (timeout: {}s)...",
+                "     Installing {} packages via {:?} (timeout: {}s)...",
                 packages.len(),
+                pm,
                 timeout_secs
             );
             println!(
-                "📦 Installing {} packages: {}",
+                "Installing {} packages: {}",
                 packages.len(),
                 packages.join(", ")
             );
 
-            // Use monitored install for better visibility
             let result = if *retry {
-                // For retry, use traditional approach
                 let command = format!(
-                    "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y {}",
+                    "sudo {} {}",
+                    pm.install_command(),
                     packages.join(" ")
                 );
                 execute_with_retry(vm, &command, *timeout_secs, 3, username).await
             } else {
-                // Use monitored install for non-retry packages
-                execute_apt_install_monitored(vm, packages, *timeout_secs, username).await
+                execute_package_install_monitored(vm, packages, *timeout_secs, username, pm).await
             };
 
             result.with_context(|| format!("Failed to install packages: {:?}", packages))?;
-            info!("     ✅ Packages installed");
-            println!("✅ Step complete!");
+            info!("     Packages installed");
+            println!("Step complete!");
         }
 
         PostBootStep::RunCommand {
@@ -136,10 +157,17 @@ async fn execute_post_boot_step(vm: &VmHandle, step: &PostBootStep, username: &s
         PostBootStep::CopyFile {
             source,
             destination,
-            mode: _,
+            mode,
         } => {
             info!("  Copying file: {} -> {}", source, destination);
-            warn!("     CopyFile (host->guest) not yet implemented, skipping");
+            vm.scp_push(username, std::path::Path::new(source), destination)
+                .await
+                .with_context(|| format!("Failed to copy {} to guest:{}", source, destination))?;
+
+            let chmod_cmd = format!("sudo chmod {} {}", mode, destination);
+            execute_with_timeout(vm, &chmod_cmd, 10, username).await?;
+
+            info!("     File copied with mode {}", mode);
         }
 
         PostBootStep::FetchFile {
@@ -205,62 +233,57 @@ async fn execute_with_timeout(
     Ok(())
 }
 
-/// Execute apt install with progress monitoring
-#[allow(clippy::too_many_lines)] // Remote script generation, SSH streaming, and marker cleanup
-async fn execute_apt_install_monitored(
+/// Execute package install with progress monitoring (OS-agnostic)
+#[allow(clippy::too_many_lines)]
+async fn execute_package_install_monitored(
     vm: &VmHandle,
     packages: &[String],
     timeout_secs: u64,
     username: &str,
+    pm: crate::templates::PackageManager,
 ) -> Result<()> {
     info!(
-        "     📊 Starting monitored apt install (timeout: {}s)",
-        timeout_secs
+        "     Starting monitored {:?} install (timeout: {}s)",
+        pm, timeout_secs
     );
 
-    // Create unique marker files for this installation
-    // Phase 1A: Proper error handling for system time (should never fail, but be explicit)
     let unique_id = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| anyhow::anyhow!("System clock error: time is before UNIX epoch: {}", e))?
         .as_secs();
-    let marker_file = format!("/tmp/apt-progress-{}.log", unique_id);
-    let completion_marker = format!("/tmp/apt-complete-{}", unique_id);
-    let script_path = format!("/tmp/apt-install-{}.sh", unique_id);
+    let marker_file = format!("/tmp/pkg-progress-{}.log", unique_id);
+    let completion_marker = format!("/tmp/pkg-complete-{}", unique_id);
+    let script_path = format!("/tmp/pkg-install-{}.sh", unique_id);
     let cleanup_cmd = format!(
         "rm -f {} {} {}",
         marker_file, completion_marker, script_path
     );
     let _ = vm.ssh_exec(username, &cleanup_cmd).await;
 
-    // Build the apt command with progress logging
-    // DEEP DEBT FIX: Simplified, observable command structure
-    //
-    // MODERN IDIOMATIC APPROACH:
-    // 1. Create a simple shell script in /tmp
-    // 2. Execute it in background
-    // 3. Monitor via completion marker
-    //
-    // This eliminates the complex nohup/sh/sudo/env nesting
-    // and makes debugging trivial
+    let env_preamble = match pm {
+        crate::templates::PackageManager::Apt | crate::templates::PackageManager::Auto => {
+            "export DEBIAN_FRONTEND=noninteractive\nexport NEEDRESTART_MODE=a\nexport NEEDRESTART_SUSPEND=1"
+        }
+        _ => "",
+    };
 
-    let script_path = format!("/tmp/apt-install-{}.sh", unique_id);
+    let script_path = format!("/tmp/pkg-install-{}.sh", unique_id);
     let script_content = format!(
         r#"#!/bin/bash
-# Auto-generated apt install script
-export DEBIAN_FRONTEND=noninteractive
-export NEEDRESTART_MODE=a
-export NEEDRESTART_SUSPEND=1
+# Auto-generated package install script
+{env_preamble}
 
-# Run apt-get and log output
-sudo apt-get install -y {} 2>&1 | tee {}
+# Run install and log output
+sudo {install_cmd} {pkgs} 2>&1 | tee {log}
 
 # Write completion marker
-echo "DONE" > {}
+echo "DONE" > {done}
 "#,
-        packages.join(" "),
-        marker_file,
-        completion_marker
+        env_preamble = env_preamble,
+        install_cmd = pm.install_command(),
+        pkgs = packages.join(" "),
+        log = marker_file,
+        done = completion_marker,
     );
 
     // Write script to VM
@@ -269,12 +292,12 @@ echo "DONE" > {}
         script_path, script_content, script_path
     );
 
-    info!("     📝 Creating install script: {}", script_path);
+    info!("     Creating install script: {}", script_path);
     vm.ssh_exec(username, &write_script_cmd).await?;
 
     // Execute script in background
     let exec_cmd = format!("nohup {} > /dev/null 2>&1 &", script_path);
-    info!("     🚀 Launching: apt-get install {}", packages.join(" "));
+    info!("     Launching: {} {}", pm.install_command(), packages.join(" "));
     vm.ssh_exec(username, &exec_cmd).await?;
 
     // Give the background process time to start
@@ -322,7 +345,7 @@ echo "DONE" > {}
         }
 
         if status_trimmed == "done" {
-            info!("     ✅ apt-get install completed");
+            info!("     Package install completed");
             break;
         }
 
@@ -381,12 +404,8 @@ echo "DONE" > {}
         last_size = current_size;
     }
 
-    // Cleanup
-    info!("     🧹 Cleaning up install artifacts");
-    let cleanup_cmd = format!(
-        "rm -f {} {} {}",
-        marker_file, completion_marker, script_path
-    );
+    info!("     Cleaning up install artifacts");
+    let cleanup_cmd = format!("rm -f {} {} {}", marker_file, completion_marker, script_path);
     let _ = vm.ssh_exec(username, &cleanup_cmd).await;
 
     Ok(())

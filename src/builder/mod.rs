@@ -107,6 +107,36 @@ impl ImageBuilder {
         &self.manifest.name
     }
 
+    /// Resolve the package manager for this build, using the manifest's
+    /// `package_manager` field and the base image name for auto-detection.
+    pub fn resolved_package_manager(&self) -> crate::templates::PackageManager {
+        self.manifest.package_manager.resolve(&self.manifest.base_image)
+    }
+
+    /// Infer the APT suite/codename from a base image filename.
+    ///
+    /// Falls back to `"noble"` when the image name doesn't contain a
+    /// recognisable Ubuntu/Debian codename.
+    fn infer_suite(base_image: &str) -> &'static str {
+        let lower = base_image.to_lowercase();
+        for (needle, suite) in [
+            ("noble", "noble"),
+            ("24.04", "noble"),
+            ("jammy", "jammy"),
+            ("22.04", "jammy"),
+            ("focal", "focal"),
+            ("20.04", "focal"),
+            ("bookworm", "bookworm"),
+            ("bullseye", "bullseye"),
+            ("trixie", "trixie"),
+        ] {
+            if lower.contains(needle) {
+                return suite;
+            }
+        }
+        "noble"
+    }
+
     /// Build a COSMIC desktop image
     ///
     /// DEPRECATED: Use the manifest-driven `build()` method instead.
@@ -353,6 +383,7 @@ mod tests {
                 static_ip: None,
             },
             pci_passthrough: vec![],
+            package_manager: crate::templates::PackageManager::default(),
             users: vec![UserConfig {
                 name: "ubuntu".to_string(),
                 password: None,
@@ -374,6 +405,8 @@ mod tests {
                     name: "ex".to_string(),
                     url: "https://example.com/ubuntu".to_string(),
                     key_url: Some("https://example.com/key.asc".to_string()),
+                    suite: None,
+                    components: vec!["main".to_string()],
                 },
             ],
             post_boot_steps: vec![PostBootStep::InstallPackages {
@@ -464,6 +497,8 @@ mod tests {
                 name: "plain".to_string(),
                 url: "https://ppa.example.com/ubuntu".to_string(),
                 key_url: None,
+                suite: None,
+                components: vec!["main".to_string()],
             },
             BuildStep::Reboot { wait_secs: 1 },
         ];

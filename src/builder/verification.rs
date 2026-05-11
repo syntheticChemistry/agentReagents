@@ -471,7 +471,7 @@ pub async fn verify_installation(vm: &VmHandle, manifest: &Manifest) -> Result<V
 
     info!("Using SSH user: {}", username);
 
-    // 1. Verify packages are installed
+    // 1. Verify packages from build steps
     checks.extend(verify_packages(vm, manifest, username).await?);
 
     // 2. Verify commands executed successfully (check for expected files/state)
@@ -479,6 +479,10 @@ pub async fn verify_installation(vm: &VmHandle, manifest: &Manifest) -> Result<V
 
     // 3. Verify system is accessible and responsive
     checks.extend(verify_system_health(vm, username).await?);
+
+    // 4. Verify manifest's verification section (required_packages, required_services,
+    //    required_files, verification_commands)
+    checks.extend(verify_manifest_requirements(vm, manifest, username).await?);
 
     let result = VerificationResult::from_checks(checks);
 
@@ -498,6 +502,117 @@ pub async fn verify_installation(vm: &VmHandle, manifest: &Manifest) -> Result<V
     }
 
     Ok(result)
+}
+
+/// Verify the explicit `verification:` section from the manifest YAML.
+///
+/// This checks `required_packages`, `required_services`, `required_files`,
+/// and `verification_commands` — all of which were previously ignored.
+async fn verify_manifest_requirements(
+    vm: &VmHandle,
+    manifest: &Manifest,
+    username: &str,
+) -> Result<Vec<VerificationCheck>> {
+    let mut checks = Vec::new();
+    let v = &manifest.verification;
+
+    // required_packages
+    for pkg in &v.required_packages {
+        let check_name = format!("Required package: {}", pkg);
+        match verify_package_robust(vm, username, pkg).await {
+            Ok(result) => {
+                let details = if result.installed {
+                    result.details.version.as_ref().map(|ver| format!("Version: {}", ver))
+                } else {
+                    Some("Not installed".to_string())
+                };
+                checks.push(VerificationCheck {
+                    name: check_name,
+                    passed: result.installed,
+                    details,
+                });
+            }
+            Err(e) => {
+                checks.push(VerificationCheck {
+                    name: check_name,
+                    passed: false,
+                    details: Some(format!("Verification error: {}", e)),
+                });
+            }
+        }
+    }
+
+    // required_services
+    for svc in &v.required_services {
+        let check_name = format!("Required service: {}", svc);
+        let cmd = format!("systemctl is-enabled {} 2>&1", shell_escape(svc));
+        let (passed, details) = match vm.ssh_exec(username, &cmd).await {
+            Ok(output) => {
+                let trimmed = output.trim();
+                if trimmed == "enabled" || trimmed == "static" || trimmed == "alias" {
+                    (true, Some(format!("Status: {}", trimmed)))
+                } else {
+                    (false, Some(format!("Status: {}", trimmed)))
+                }
+            }
+            Err(e) => (false, Some(format!("Check failed: {}", e))),
+        };
+        checks.push(VerificationCheck { name: check_name, passed, details });
+    }
+
+    // required_files
+    for file_path in &v.required_files {
+        let check_name = format!("Required file: {}", file_path);
+        let cmd = format!("test -e {} && echo exists || echo missing", shell_escape(file_path));
+        let (passed, details) = match vm.ssh_exec(username, &cmd).await {
+            Ok(output) => {
+                let trimmed = output.trim();
+                (trimmed == "exists", Some(trimmed.to_string()))
+            }
+            Err(e) => (false, Some(format!("Check failed: {}", e))),
+        };
+        checks.push(VerificationCheck { name: check_name, passed, details });
+    }
+
+    // verification_commands
+    for vcmd in &v.verification_commands {
+        let check_name = vcmd.description.clone().unwrap_or_else(|| format!("Command: {}", vcmd.command));
+        let (passed, details) = match vm.ssh_exec(username, &vcmd.command).await {
+            Ok(output) => {
+                // ssh_exec returns Ok only on exit code 0; for non-zero expected
+                // exit codes we'd need raw exit code, but the common case is 0.
+                if vcmd.expected_exit_code == 0 {
+                    (true, Some(output.lines().next().unwrap_or("").to_string()))
+                } else {
+                    (false, Some(format!("Expected exit code {}, got 0", vcmd.expected_exit_code)))
+                }
+            }
+            Err(e) => {
+                if vcmd.expected_exit_code != 0 {
+                    (true, Some(format!("Non-zero exit (expected {})", vcmd.expected_exit_code)))
+                } else {
+                    (false, Some(format!("Command failed: {}", e)))
+                }
+            }
+        };
+        checks.push(VerificationCheck { name: check_name, passed, details });
+    }
+
+    if !v.required_packages.is_empty()
+        || !v.required_services.is_empty()
+        || !v.required_files.is_empty()
+        || !v.verification_commands.is_empty()
+    {
+        info!(
+            "Manifest verification: {} packages, {} services, {} files, {} commands",
+            v.required_packages.len(),
+            v.required_services.len(),
+            v.required_files.len(),
+            v.verification_commands.len(),
+        );
+    }
+
+    Ok(checks)
 }
 
 /// Verify packages are installed

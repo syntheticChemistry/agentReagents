@@ -46,6 +46,11 @@ pub struct TemplateManifest {
     /// Verification steps
     pub verification: VerificationConfig,
 
+    /// Package manager to use for install steps. Auto-detected from
+    /// `base_image` when set to `Auto` (the default).
+    #[serde(default)]
+    pub package_manager: PackageManager,
+
     /// Metadata (optional)
     #[serde(default)]
     pub metadata: HashMap<String, String>,
@@ -98,6 +103,130 @@ const fn default_timeout() -> u64 {
     2400 // 40 minutes
 }
 
+/// Package manager abstraction for OS-agnostic build steps.
+///
+/// When set to `Auto` (the default), the builder infers the package manager
+/// from the base image name or from `/etc/os-release` inside the guest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PackageManager {
+    /// Auto-detect from base image or os-release (default).
+    Auto,
+    /// Debian/Ubuntu APT.
+    Apt,
+    /// Fedora/RHEL DNF.
+    Dnf,
+    /// Arch Linux Pacman.
+    Pacman,
+    /// openSUSE Zypper.
+    Zypper,
+}
+
+impl Default for PackageManager {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+impl PackageManager {
+    /// Resolve `Auto` to a concrete manager based on the base image name.
+    pub fn resolve(self, base_image: &str) -> Self {
+        if self != Self::Auto {
+            return self;
+        }
+        let lower = base_image.to_lowercase();
+        if lower.contains("ubuntu") || lower.contains("debian") || lower.contains("mint") {
+            Self::Apt
+        } else if lower.contains("fedora") || lower.contains("centos") || lower.contains("rhel") || lower.contains("rocky") || lower.contains("alma") {
+            Self::Dnf
+        } else if lower.contains("arch") || lower.contains("manjaro") {
+            Self::Pacman
+        } else if lower.contains("suse") || lower.contains("sles") || lower.contains("tumbleweed") {
+            Self::Zypper
+        } else {
+            Self::Apt
+        }
+    }
+
+    /// Install command prefix (run as root).
+    pub fn install_command(&self) -> &'static str {
+        match self {
+            Self::Apt | Self::Auto => "DEBIAN_FRONTEND=noninteractive apt-get install -y",
+            Self::Dnf => "dnf install -y",
+            Self::Pacman => "pacman -S --noconfirm",
+            Self::Zypper => "zypper install -y",
+        }
+    }
+
+    /// Update package index command.
+    pub fn update_command(&self) -> &'static str {
+        match self {
+            Self::Apt | Self::Auto => "apt-get update",
+            Self::Dnf => "dnf check-update || true",
+            Self::Pacman => "pacman -Sy",
+            Self::Zypper => "zypper refresh",
+        }
+    }
+
+    /// Check whether a package is installed.
+    pub fn check_installed_command(&self, pkg: &str) -> String {
+        match self {
+            Self::Apt | Self::Auto => format!("dpkg -s {} 2>/dev/null | grep -q 'Status: install ok installed'", pkg),
+            Self::Dnf => format!("rpm -q {} >/dev/null 2>&1", pkg),
+            Self::Pacman => format!("pacman -Qi {} >/dev/null 2>&1", pkg),
+            Self::Zypper => format!("rpm -q {} >/dev/null 2>&1", pkg),
+        }
+    }
+}
+
+/// Repository configuration, abstracted across package managers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "format", rename_all = "lowercase")]
+pub enum RepositoryConfig {
+    /// APT (Debian/Ubuntu) repository
+    Apt {
+        /// Repository URL
+        url: String,
+        /// Suite/codename (e.g. "noble", "jammy", "bookworm"). Defaults from base image.
+        #[serde(default)]
+        suite: Option<String>,
+        /// Components (e.g. "main", "universe"). Defaults to "main".
+        #[serde(default = "default_components")]
+        components: Vec<String>,
+        /// Optional signing key URL
+        #[serde(default)]
+        key_url: Option<String>,
+    },
+    /// DNF/YUM (Fedora/RHEL) repository
+    Dnf {
+        /// Repository name
+        name: String,
+        /// Base URL
+        baseurl: String,
+        /// GPG key URL
+        #[serde(default)]
+        gpgkey: Option<String>,
+        /// Whether GPG checking is enabled
+        #[serde(default = "default_true")]
+        gpgcheck: bool,
+    },
+    /// Pacman (Arch) repository
+    Pacman {
+        /// Section name in pacman.conf
+        name: String,
+        /// Server URL pattern
+        server: String,
+    },
+}
+
+fn default_components() -> Vec<String> {
+    vec!["main".to_string()]
+}
+
+const fn default_true() -> bool {
+    true
+}
+
 /// User configuration for cloud-init
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserConfig {
@@ -127,14 +256,25 @@ pub enum BuildStep {
         timeout_secs: u64,
     },
 
-    /// Add APT repository
+    /// Add a package repository (APT, DNF, or Pacman).
+    ///
+    /// For backward compatibility, specifying just `name`, `url`, and
+    /// optional `key_url` is treated as APT with the suite/components
+    /// inferred at build time.
     AddRepository {
-        /// Short name for `sources.list.d` and keyring files.
+        /// Short name for `sources.list.d` / yum.repos.d files.
         name: String,
-        /// `deb` line URL (without `deb [arch=...]` prefix if using signed-by).
+        /// Repository URL.
         url: String,
-        /// Optional URL to the repository signing key.
+        /// Optional URL to the repository signing key (APT/DNF).
         key_url: Option<String>,
+        /// Suite/codename override for APT repos (e.g. "noble", "jammy").
+        /// If omitted, inferred from the base image.
+        #[serde(default)]
+        suite: Option<String>,
+        /// Component list for APT repos (defaults to `["main"]`).
+        #[serde(default = "default_repo_components")]
+        components: Vec<String>,
     },
 
     /// Install packages
@@ -181,6 +321,10 @@ pub enum BuildStep {
         #[serde(default = "default_reboot_wait")]
         wait_secs: u64,
     },
+}
+
+fn default_repo_components() -> Vec<String> {
+    vec!["main".to_string()]
 }
 
 const fn default_cloud_init_timeout() -> u64 {
@@ -397,6 +541,7 @@ mod tests {
                 static_ip: None,
             },
             pci_passthrough: vec![],
+            package_manager: PackageManager::default(),
             users: vec![],
             build_steps: vec![],
             post_boot_steps: vec![],
@@ -433,6 +578,7 @@ mod tests {
                 static_ip: None,
             },
             pci_passthrough: vec![],
+            package_manager: PackageManager::default(),
             users: vec![],
             build_steps: vec![],
             post_boot_steps: vec![],
@@ -480,6 +626,7 @@ mod tests {
                 static_ip: Some("10.0.0.5".to_string()),
             },
             pci_passthrough: vec![],
+            package_manager: PackageManager::default(),
             users: vec![UserConfig {
                 name: "u".to_string(),
                 password: None,
@@ -512,5 +659,77 @@ mod tests {
         assert_eq!(back.resources.static_ip, manifest.resources.static_ip);
         assert_eq!(back.build_steps.len(), 1);
         assert_eq!(back.post_boot_steps.len(), 1);
+    }
+
+    #[test]
+    fn package_manager_resolve_auto_ubuntu() {
+        let pm = PackageManager::Auto.resolve("ubuntu-24.04-server.img");
+        assert_eq!(pm, PackageManager::Apt);
+    }
+
+    #[test]
+    fn package_manager_resolve_auto_fedora() {
+        let pm = PackageManager::Auto.resolve("Fedora-Cloud-Base-40.qcow2");
+        assert_eq!(pm, PackageManager::Dnf);
+    }
+
+    #[test]
+    fn package_manager_resolve_auto_arch() {
+        let pm = PackageManager::Auto.resolve("archlinux-2024.01.01-x86_64.qcow2");
+        assert_eq!(pm, PackageManager::Pacman);
+    }
+
+    #[test]
+    fn package_manager_resolve_explicit_overrides_auto() {
+        let pm = PackageManager::Dnf.resolve("ubuntu-24.04.img");
+        assert_eq!(pm, PackageManager::Dnf);
+    }
+
+    #[test]
+    fn package_manager_install_and_update_commands() {
+        assert!(PackageManager::Apt.install_command().contains("apt-get"));
+        assert!(PackageManager::Dnf.install_command().contains("dnf"));
+        assert!(PackageManager::Pacman.install_command().contains("pacman"));
+        assert!(PackageManager::Zypper.install_command().contains("zypper"));
+
+        assert!(PackageManager::Apt.update_command().contains("apt-get"));
+        assert!(PackageManager::Dnf.update_command().contains("dnf"));
+    }
+
+    #[test]
+    fn package_manager_check_installed() {
+        let cmd = PackageManager::Apt.check_installed_command("curl");
+        assert!(cmd.contains("dpkg"));
+        let cmd = PackageManager::Dnf.check_installed_command("curl");
+        assert!(cmd.contains("rpm"));
+    }
+
+    #[test]
+    fn package_manager_serde_roundtrip() {
+        let pm = PackageManager::Dnf;
+        let json = serde_json::to_string(&pm).unwrap();
+        assert_eq!(json, r#""dnf""#);
+        let back: PackageManager = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, PackageManager::Dnf);
+    }
+
+    #[test]
+    fn add_repository_with_suite_and_components_roundtrip() {
+        let step = BuildStep::AddRepository {
+            name: "system76".to_string(),
+            url: "https://apt.system76.com/cosmic".to_string(),
+            key_url: Some("https://apt.system76.com/key.asc".to_string()),
+            suite: Some("noble".to_string()),
+            components: vec!["main".to_string(), "contrib".to_string()],
+        };
+        let yaml = serde_yaml::to_string(&step).unwrap();
+        let back: BuildStep = serde_yaml::from_str(&yaml).unwrap();
+        match back {
+            BuildStep::AddRepository { suite, components, .. } => {
+                assert_eq!(suite, Some("noble".to_string()));
+                assert_eq!(components, vec!["main", "contrib"]);
+            }
+            _ => panic!("expected AddRepository"),
+        }
     }
 }

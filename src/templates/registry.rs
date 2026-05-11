@@ -252,6 +252,7 @@ mod tests {
                 static_ip: None,
             },
             pci_passthrough: vec![],
+            package_manager: crate::templates::PackageManager::default(),
             users: vec![UserConfig {
                 name: "ubuntu".to_string(),
                 password: None,

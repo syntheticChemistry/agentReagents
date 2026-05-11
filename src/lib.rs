@@ -41,6 +41,7 @@
 //!             static_ip: None,
 //!         },
 //!         pci_passthrough: vec![],
+//!         package_manager: Default::default(),
 //!         users: vec![],
 //!         build_steps: vec![],
 //!         post_boot_steps: vec![],

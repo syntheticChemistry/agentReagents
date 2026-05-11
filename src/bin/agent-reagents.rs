@@ -136,7 +136,16 @@ async fn main() -> Result<()> {
             let addr: std::net::SocketAddr = format!("{listen}:{port}")
                 .parse()
                 .with_context(|| format!("invalid listen address: {listen}:{port}"))?;
-            agent_reagents::server::run_server(addr, cli.registry, standalone).await?;
+            agent_reagents::server::run_server(
+                addr,
+                cli.registry,
+                standalone,
+                agent_reagents::server::RegistrationSettings::new(
+                    std::path::PathBuf::from("/run/ecoPrimals/registry.sock"),
+                    "agent-reagents".into(),
+                ),
+            )
+            .await?;
         }
     }
 
