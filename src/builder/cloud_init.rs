@@ -278,76 +278,6 @@ impl ImageBuilder {
         builder.build()
     }
 
-    /// Create cloud-init configuration for COSMIC desktop using benchScale builder
-    /// OLD: Create cloud-init YAML string (deprecated)
-    fn _create_cosmic_cloud_init_yaml_deprecated(ssh_public_key: &str) -> String {
-        let cloud_init = format!(
-            r#"#cloud-config
-users:
-  - name: cosmic
-    groups: users, admin, sudo
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    shell: /bin/bash
-    lock_passwd: false
-    ssh_authorized_keys:
-      - {}
-
-chpasswd:
-  list: |
-    cosmic:cosmic2025
-  expire: false
-
-package_update: true
-package_upgrade: true
-
-packages:
-  - build-essential
-  - git
-  - curl
-  - wget
-  - vim
-  - libwayland-client0
-  - libwayland-server0
-  - xwayland
-  - software-properties-common
-  - gnupg2
-  - ca-certificates
-  - openssh-server
-  - avahi-daemon
-  - net-tools
-  - dbus-x11
-  - pipewire
-  - wireplumber
-
-runcmd:
-  - echo "Adding System76 COSMIC repository..."
-  - curl -fsSL https://apt.system76.com/signing-key.asc | gpg --dearmor -o /etc/apt/keyrings/system76.gpg
-  - echo "deb [signed-by=/etc/apt/keyrings/system76.gpg] https://apt.system76.com/cosmic noble main" | tee /etc/apt/sources.list.d/system76-cosmic.list
-  - apt-get update
-  - echo "Installing COSMIC Desktop..."
-  - DEBIAN_FRONTEND=noninteractive apt-get install -y cosmic-session cosmic-greeter cosmic-comp cosmic-panel cosmic-launcher cosmic-applets cosmic-settings cosmic-files cosmic-term cosmic-edit
-  - systemctl enable cosmic-greeter
-  - systemctl set-default graphical.target
-  - systemctl enable ssh
-  - systemctl start ssh
-  - apt-get autoremove -y
-  - apt-get clean
-  - sync
-
-power_state:
-  mode: poweroff
-  timeout: 2400
-  condition: true
-
-final_message: |
-  COSMIC installation complete!
-  System will power off.
-"#,
-            ssh_public_key
-        );
-
-        cloud_init
-    }
 }
 
 /// Find local package file for injection instead of downloading
@@ -492,12 +422,4 @@ mod tests {
         std::env::set_current_dir(old).expect("restore cwd");
     }
 
-    #[test]
-    fn deprecated_cosmic_yaml_template_includes_key_and_cosmic() {
-        let y = ImageBuilder::_create_cosmic_cloud_init_yaml_deprecated("ssh-rsa AAAABASE64");
-        assert!(y.contains("#cloud-config"));
-        assert!(y.contains("ssh-rsa AAAABASE64"));
-        assert!(y.contains("COSMIC"));
-        assert!(y.contains("power_state:"));
-    }
 }

@@ -12,25 +12,9 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{info, warn};
 
-/// Execute all post-boot steps on a VM
+/// Execute all post-boot steps on a VM.
 #[tracing::instrument(skip(vm, steps))]
 pub async fn execute_post_boot_steps(
-    vm: &VmHandle,
-    steps: &[PostBootStep],
-    username: &str,
-) -> Result<()> {
-    execute_post_boot_steps_with_pm(
-        vm,
-        steps,
-        username,
-        crate::templates::PackageManager::Apt,
-    )
-    .await
-}
-
-/// Execute all post-boot steps on a VM with a specific package manager.
-#[tracing::instrument(skip(vm, steps))]
-pub async fn execute_post_boot_steps_with_pm(
     vm: &VmHandle,
     steps: &[PostBootStep],
     username: &str,

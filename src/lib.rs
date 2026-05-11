@@ -57,7 +57,7 @@
 //!     };
 //!     let mut builder = ImageBuilder::from_manifest(manifest);
 //!     let result = builder
-//!         .build_cosmic_desktop("ssh-rsa AAAA...".to_string())
+//!         .build("ssh-rsa AAAA...".to_string())
 //!         .await?;
 //!     println!("Template created: {:?}", result.template_path);
 //!     Ok(())

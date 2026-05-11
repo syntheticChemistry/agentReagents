@@ -28,21 +28,15 @@ async fn test_full_ubuntu_build() -> anyhow::Result<()> {
     // Create manifest-driven builder
     let mut builder = ImageBuilder::from_manifest(manifest);
 
-    // Execute build
-    #[expect(
-        deprecated,
-        reason = "build_cosmic_desktop until manifest build API is default in tests"
-    )]
-    let result = builder.build_cosmic_desktop(ssh_key).await?;
+    let result = builder.build(ssh_key).await?;
 
-    // Verify result
     assert!(result.template_path.exists(), "Template file should exist");
     assert!(result.size_bytes > 0, "Template should have non-zero size");
     assert!(result.verification.passed, "Verification should pass");
 
-    println!("✅ Build completed: {}", result.template_path.display());
-    println!("   Size: {} bytes", result.size_bytes);
-    println!("   Duration: {:?}", result.build_duration);
+    println!("Build completed: {}", result.template_path.display());
+    println!("  Size: {} bytes", result.size_bytes);
+    println!("  Duration: {:?}", result.build_duration);
 
     Ok(())
 }
@@ -50,30 +44,21 @@ async fn test_full_ubuntu_build() -> anyhow::Result<()> {
 #[tokio::test]
 #[ignore] // Run with: cargo test --release --test e2e_build_test -- --ignored
 async fn test_full_popos_cosmic_build() -> anyhow::Result<()> {
-    // Initialize tracing
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
         .init();
 
-    // Load manifest
     let manifest_path = PathBuf::from("templates/popos-24-cosmic.yaml");
     let manifest = TemplateManifest::from_yaml_file(&manifest_path)?;
 
-    // Get SSH key
     let home = std::env::var("HOME")?;
     let ssh_key = std::fs::read_to_string(PathBuf::from(home).join(".ssh/id_rsa.pub"))?
         .trim()
         .to_string();
 
-    // Create manifest-driven builder
     let mut builder = ImageBuilder::from_manifest(manifest);
 
-    // Execute build
-    #[expect(
-        deprecated,
-        reason = "build_cosmic_desktop until manifest build API is default in tests"
-    )]
-    let result = builder.build_cosmic_desktop(ssh_key).await?;
+    let result = builder.build(ssh_key).await?;
 
     // Verify result
     assert!(result.template_path.exists(), "Template file should exist");

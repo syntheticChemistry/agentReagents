@@ -10,10 +10,6 @@ use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 
 #[tokio::main]
-#[expect(
-    deprecated,
-    reason = "build_cosmic_desktop retained for this example until build() is public"
-)]
 async fn main() -> Result<()> {
     // Initialize tracing for observability
     tracing_subscriber::fmt().with_env_filter("info").init();
@@ -66,6 +62,7 @@ async fn main() -> Result<()> {
             required_files: vec![],
             verification_commands: vec![],
         },
+        package_manager: Default::default(),
         metadata: std::collections::HashMap::new(),
         created: None,
         checksum: None,
@@ -85,7 +82,7 @@ async fn main() -> Result<()> {
     println!("📊 Build progress will be displayed...");
     println!();
 
-    match builder.build_cosmic_desktop(ssh_key).await {
+    match builder.build(ssh_key).await {
         Ok(result) => {
             println!();
             println!("╔══════════════════════════════════════════════════════════════╗");

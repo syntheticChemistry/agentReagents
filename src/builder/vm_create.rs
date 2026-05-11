@@ -55,11 +55,29 @@ impl ImageBuilder {
             .pci_passthrough
             .iter()
             .map(|p| {
-                let legacy = benchscale::PciPassthroughDevice {
-                    bdf: p.bdf.clone(),
-                    no_flr: p.no_flr,
+                let attach_mode = match p.attach_mode.as_str() {
+                    "hot_managed" => benchscale::AttachMode::HotManaged,
+                    "hot_unmanaged" => benchscale::AttachMode::HotUnmanaged,
+                    _ => if p.no_flr {
+                        benchscale::AttachMode::HotUnmanaged
+                    } else {
+                        benchscale::AttachMode::Cold
+                    },
                 };
-                benchscale::VfioPassthrough::from_legacy(&legacy)
+                benchscale::VfioPassthrough {
+                    device: benchscale::PciDevice {
+                        bdf: p.bdf.clone(),
+                        iommu_group: None,
+                        vendor_id: 0,
+                        device_id: 0,
+                        driver: None,
+                        reset_methods: Vec::new(),
+                    },
+                    managed: p.managed,
+                    rom_bar: p.rom_bar,
+                    attach_mode,
+                    qemu_properties: p.qemu_properties.clone(),
+                }
             })
             .collect();
 
@@ -274,7 +292,7 @@ impl ImageBuilder {
                 filtered_steps.len()
             );
 
-            post_boot::execute_post_boot_steps_with_pm(
+            post_boot::execute_post_boot_steps(
                 &vm_handle,
                 &filtered_steps,
                 username,

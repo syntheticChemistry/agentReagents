@@ -137,13 +137,12 @@ impl ImageBuilder {
         "noble"
     }
 
-    /// Build a COSMIC desktop image
+    /// Build a VM image from the manifest.
     ///
-    /// DEPRECATED: Use the manifest-driven `build()` method instead.
-    /// This method exists for backward compatibility.
+    /// Creates a builder VM, executes all build and post-boot steps,
+    /// verifies the result, and saves the template image.
     #[instrument(skip(self))]
-    #[deprecated(note = "Use manifest-driven build() method instead")]
-    pub async fn build_cosmic_desktop(&mut self, ssh_public_key: String) -> Result<BuildResult> {
+    pub async fn build(&mut self, ssh_public_key: String) -> Result<BuildResult> {
         let start_time = std::time::Instant::now();
 
         info!("Starting COSMIC desktop build: {}", self.manifest.name);

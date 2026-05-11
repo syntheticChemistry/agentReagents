@@ -220,7 +220,10 @@ impl NetworkMonitor {
 
         info!("Network recovery: Bouncing network interface...");
 
-        let bounce_cmd = "sudo ip link set enp1s0 down && sleep 2 && sudo ip link set enp1s0 up";
+        let bounce_cmd = concat!(
+            "iface=$(ip -o -4 route show default 2>/dev/null | awk '{print $5}' | head -1); ",
+            "[ -n \"$iface\" ] && sudo ip link set \"$iface\" down && sleep 2 && sudo ip link set \"$iface\" up"
+        );
         if vm_handle.ssh_exec(username, bounce_cmd).await.is_ok() {
             sleep(Duration::from_secs(5)).await;
             if self.check_connectivity(username).await.is_ok() {

@@ -86,10 +86,14 @@ pub struct ResourceConfig {
     pub static_ip: Option<String>,
 }
 
-/// PCI device for VFIO passthrough into the VM
+/// PCI device for VFIO passthrough into the VM.
+///
+/// Expresses the full range of GPU sovereignty knobs: attach mode
+/// (cold vs hot), ROM BAR control, managed/unmanaged binding, and
+/// arbitrary QEMU device properties (e.g. `x-no-mmap=on`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PciPassthroughConfig {
-    /// PCI bus/device/function (e.g., "0000:4d:00.0")
+    /// PCI bus/device/function (e.g., "0000:4d:00.0").
     pub bdf: String,
 
     /// Prevent Function Level Reset on VM shutdown so GPU hardware
@@ -97,6 +101,36 @@ pub struct PciPassthroughConfig {
     /// VM-to-host transition. Only useful for reagent-capture flows.
     #[serde(default)]
     pub no_flr: bool,
+
+    /// How the device should be attached to the VM.
+    /// - `cold` (default): embedded in domain XML from boot.
+    /// - `hot_managed`: hot-attached, libvirt manages driver binding.
+    /// - `hot_unmanaged`: hot-attached, caller manages driver binding.
+    #[serde(default = "default_attach_mode")]
+    pub attach_mode: String,
+
+    /// Enable or disable the ROM BAR. Disabling prevents VGA ROM from
+    /// hanging the VM on boot for secondary GPUs.
+    #[serde(default = "default_rom_bar_flag")]
+    pub rom_bar: bool,
+
+    /// Whether libvirt manages driver binding (`managed='yes'`).
+    #[serde(default = "default_managed_flag")]
+    pub managed: bool,
+
+    /// Arbitrary QEMU device properties (e.g. `{"x-no-mmap": "on"}`).
+    #[serde(default)]
+    pub qemu_properties: std::collections::HashMap<String, String>,
+}
+
+fn default_attach_mode() -> String {
+    "cold".to_string()
+}
+fn default_rom_bar_flag() -> bool {
+    true
+}
+fn default_managed_flag() -> bool {
+    true
 }
 
 const fn default_timeout() -> u64 {

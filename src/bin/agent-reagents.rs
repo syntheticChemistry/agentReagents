@@ -297,10 +297,8 @@ async fn cmd_build(
     let timeout = std::time::Duration::from_secs(manifest.resources.timeout_secs);
     let mut builder = ImageBuilder::from_manifest(manifest).with_timeout(timeout);
 
-    // Execute build (NOTE: build_cosmic_desktop is deprecated, use generic build() in future)
-    #[allow(deprecated)]
     let result = builder
-        .build_cosmic_desktop(ssh_key)
+        .build(ssh_key)
         .await
         .context("Build failed")?;
 
