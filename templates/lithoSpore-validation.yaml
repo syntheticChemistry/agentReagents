@@ -1,0 +1,82 @@
+name: lithoSpore-validation
+version: 1.0.0
+description: |
+  Minimal VM for lithoSpore USB artifact validation.
+  Proves the Targeted GuideStone runs on a clean system
+  with zero pre-installed dependencies (musl-static binaries).
+  Optionally validates Tier 1 (Python) if python3 is available.
+
+base_image: images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+
+resources:
+  memory_mb: 2048
+  vcpus: 2
+  disk_gb: 10
+  timeout_secs: 600
+
+users:
+  - name: litho
+    groups:
+      - sudo
+      - users
+    sudo: true
+    shell: /bin/bash
+    lock_passwd: false
+    ssh_authorized_keys: []
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 300
+
+  - type: install_packages
+    packages:
+      - openssh-server
+      - curl
+
+  - type: enable_service
+    service: ssh
+
+  - type: create_file
+    path: /etc/lithoSpore-gate
+    content: |
+      gate=lithoSpore-validation
+      version=1.0.0
+      purpose=guidestone-validation
+      tier_max=2
+    mode: "0644"
+
+post_boot_steps:
+  - type: run_command
+    command: mkdir -p /opt/lithoSpore && chmod 0755 /opt/lithoSpore
+
+verification:
+  required_packages:
+    - openssh-server
+    - curl
+
+  required_services:
+    - ssh
+
+  required_files:
+    - /etc/lithoSpore-gate
+
+  verification_commands:
+    - command: systemctl is-enabled ssh
+      expected_exit_code: 0
+      description: SSH service should be enabled
+
+    - command: id litho
+      expected_exit_code: 0
+      description: User litho should exist
+
+    - command: test -d /opt/lithoSpore
+      expected_exit_code: 0
+      description: lithoSpore mount point should exist
+
+metadata:
+  os: ubuntu
+  os_version: "24.04"
+  purpose: lithoSpore-guidestone-validation
+  fast_boot: true
+  minimal: true
+  project: ecoPrimals/CATHEDRAL

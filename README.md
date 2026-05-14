@@ -2,11 +2,10 @@
 
 **Template-driven VM image builder for the ecoPrimals ecosystem**
 
-🟢 **Status**: Production Ready — v0.2.0, Rust 2024 edition, Grade A  
-📅 **Last Updated**: March 29, 2026  
-🧪 **Tests**: 33 lib + 6 integration passing  
-🔒 **Safety**: `forbid(unsafe_code)`, `deny(clippy::unwrap_used)`, `clippy::pedantic` + `clippy::nursery`  
-📜 **License**: AGPL-3.0-or-later (scyBorg Provenance Trio)
+**Status**: Production Ready — v0.2.0, Rust 2024 edition
+**Last Updated**: May 14, 2026
+**Safety**: `forbid(unsafe_code)`, `deny(clippy::unwrap_used)`, `clippy::pedantic` + `clippy::nursery`
+**License**: AGPL-3.0-or-later (scyBorg Provenance Trio)
 
 ## Security Note
 
@@ -83,6 +82,7 @@ Pre-built templates for ecoPrimals gate deployments:
 | `gate-ubuntu24-biomeos` | Standard biomeOS gate (Songbird + BearDog + NestGate) | x86_64 |
 | `gate-ubuntu24-gpu-sovereign` | GPU VFIO passthrough with glowplug | x86_64 |
 | `gate-aarch64-pixelgate` | ARM64 mobile gate for Pixel devices | aarch64 |
+| `lithoSpore-validation` | Minimal VM for lithoSpore USB GuideStone validation | x86_64 |
 
 ## Code Structure
 
@@ -95,7 +95,7 @@ src/
 │   ├── mod.rs               # Build orchestration
 │   ├── cloud_init_monitor.rs
 │   ├── post_boot.rs         # SSH-based synthesis
-│   ├── verification.rs      # Multi-method verification
+│   ├── verification/         # Multi-method verification (mod, package, types)
 │   ├── vm_handle.rs         # VM interface
 │   └── vm_reboot.rs         # Reboot handling
 ├── server/
@@ -109,6 +109,7 @@ src/
 
 templates/
 ├── gates/                   # ecoPrimals gate templates
+├── lithoSpore-validation.yaml  # CATHEDRAL GuideStone validation VM
 └── *.yaml                   # Additional templates
 ```
 
