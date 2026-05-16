@@ -1,0 +1,171 @@
+name: nucleus-gate-minimal
+version: 1.0.0
+description: |
+  Minimal sovereign gate VM for provenance trio validation.
+  Provisions a Pop!_OS-like Ubuntu server with the 4 provenance primals
+  (rhizoCrypt, loamSpine, sweetGrass, NestGate) deployed via plasmidBin.
+  Validates the full nest_store signal graph in OS-level isolation.
+
+  Use case: cross-VM testing of multi-gate federation and artifact creation
+  without requiring physical hardware. Closest to production gate behavior.
+
+base_image: images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+
+resources:
+  memory_mb: 8192
+  vcpus: 4
+  disk_gb: 40
+  timeout_secs: 900
+
+users:
+  - name: irongate
+    password: nucleus-test-2026
+    groups:
+      - sudo
+      - users
+    ssh_authorized_keys: []
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 300
+
+  - type: install_packages
+    packages:
+      - openssh-server
+      - net-tools
+      - curl
+      - wget
+      - jq
+      - blake3sum
+      - systemd
+
+  - type: run_command
+    command: |
+      mkdir -p /opt/plasmidBin /opt/nucleus/data /opt/nucleus/logs
+      mkdir -p /home/irongate/.config/biomeos/family
+
+  # Deploy provenance trio + NestGate from plasmidBin
+  - type: run_command
+    command: |
+      cd /opt/plasmidBin
+      for primal in rhizocrypt loamspine sweetgrass nestgate; do
+        if [ -f "/mnt/plasmidBin/${primal}" ]; then
+          cp "/mnt/plasmidBin/${primal}" .
+          chmod +x "${primal}"
+        fi
+      done
+
+  # Create systemd units for each primal
+  - type: create_file
+    path: /etc/systemd/system/nestgate.service
+    content: |
+      [Unit]
+      Description=NestGate sovereign storage
+      After=network.target
+
+      [Service]
+      ExecStart=/opt/plasmidBin/nestgate --port 9500 --data-dir /opt/nucleus/data/nestgate
+      Restart=on-failure
+      User=irongate
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: create_file
+    path: /etc/systemd/system/rhizocrypt.service
+    content: |
+      [Unit]
+      Description=rhizoCrypt DAG engine
+      After=network.target
+
+      [Service]
+      ExecStart=/opt/plasmidBin/rhizocrypt --port 9700 --data-dir /opt/nucleus/data/rhizocrypt
+      Restart=on-failure
+      User=irongate
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: create_file
+    path: /etc/systemd/system/loamspine.service
+    content: |
+      [Unit]
+      Description=loamSpine certificate ledger
+      After=network.target rhizocrypt.service
+
+      [Service]
+      ExecStart=/opt/plasmidBin/loamspine --port 9710 --data-dir /opt/nucleus/data/loamspine
+      Restart=on-failure
+      User=irongate
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: create_file
+    path: /etc/systemd/system/sweetgrass.service
+    content: |
+      [Unit]
+      Description=sweetGrass attribution braids
+      After=network.target loamspine.service
+
+      [Service]
+      ExecStart=/opt/plasmidBin/sweetgrass --port 9720 --data-dir /opt/nucleus/data/sweetgrass
+      Restart=on-failure
+      User=irongate
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: run_command
+    command: |
+      systemctl daemon-reload
+      systemctl enable nestgate rhizocrypt loamspine sweetgrass
+      systemctl start nestgate rhizocrypt loamspine sweetgrass
+
+  # Wait for primals to be ready
+  - type: run_command
+    command: |
+      for port in 9500 9700 9710 9720; do
+        for i in $(seq 1 30); do
+          if curl -s "http://127.0.0.1:${port}" >/dev/null 2>&1; then
+            break
+          fi
+          sleep 1
+        done
+      done
+
+  - type: create_file
+    path: /opt/nucleus/GATE_READY
+    content: |
+      Nucleus Gate (Provenance Trio) - Ready
+      Date: {{ timestamp }}
+      Primals: nestgate rhizocrypt loamspine sweetgrass
+      Ports: 9500 9700 9710 9720
+      Signal: nest_store
+    mode: "0644"
+
+verification:
+  required_packages:
+    - openssh-server
+    - curl
+    - jq
+  required_services:
+    - ssh
+    - nestgate
+    - rhizocrypt
+    - loamspine
+    - sweetgrass
+  connectivity:
+    - port: 9500
+    - port: 9700
+    - port: 9710
+    - port: 9720
+  custom_checks:
+    - command: "curl -s http://127.0.0.1:9700 | jq -r '.result.status // .error'"
+      expect_contains: "alive"
+    - command: "test -f /opt/nucleus/GATE_READY"
+      expect_exit_code: 0
