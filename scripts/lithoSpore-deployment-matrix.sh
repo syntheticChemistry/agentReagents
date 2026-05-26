@@ -199,7 +199,8 @@ run_target() {
     echo "  [1/6] Building VM..."
     cd "$REPO_ROOT"
     if [ -f "$template" ]; then
-        sudo -E ./target/release/agent-reagents build "$template" 2>&1 | tee "$results_dir/build.log" || {
+        AGENT_REAGENTS="${AGENT_REAGENTS:-$(command -v agent-reagents 2>/dev/null || echo ./target/release/agent-reagents)}"
+        sudo -E "$AGENT_REAGENTS" build "$template" 2>&1 | tee "$results_dir/build.log" || {
             echo "  ${RED}ERROR: VM build failed${RESET}"
             RESULTS[$target]="BUILD_FAIL"
             return

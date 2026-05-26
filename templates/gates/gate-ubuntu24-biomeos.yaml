@@ -61,13 +61,18 @@ post_boot_steps:
 
   - type: run_command
     command: |
-      if [ -d /mnt/plasmidbin/primals/x86_64 ]; then
-        cp /mnt/plasmidbin/primals/x86_64/songbird /opt/biomeos/bin/ 2>/dev/null || true
-        cp /mnt/plasmidbin/primals/x86_64/beardog /opt/biomeos/bin/ 2>/dev/null || true
-        cp /mnt/plasmidbin/primals/x86_64/nestgate /opt/biomeos/bin/ 2>/dev/null || true
-        chmod +x /opt/biomeos/bin/*
-      fi
-    description: "Deploy primals from plasmidBin (if mounted)"
+      PLASMID_BIN="${PLASMID_BIN:-/opt/plasmidBin}"
+      ARCH="$(uname -m)"
+      SRC="${PLASMID_BIN}/primals/${ARCH}"
+      for primal in songbird beardog nestgate; do
+        if [ -f "${SRC}/${primal}" ]; then
+          cp "${SRC}/${primal}" /opt/biomeos/bin/
+        elif command -v fetch.sh >/dev/null 2>&1; then
+          fetch.sh pull "${primal}" --arch "${ARCH}" --dest /opt/biomeos/bin/
+        fi
+      done
+      chmod +x /opt/biomeos/bin/* 2>/dev/null || true
+    description: "Deploy primals from plasmidBin (postPrimordial)"
 
   - type: create_file
     path: /etc/systemd/system/songbird.service

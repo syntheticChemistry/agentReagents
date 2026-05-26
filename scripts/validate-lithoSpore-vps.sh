@@ -151,7 +151,8 @@ cd "$REPO_ROOT"
 TEMPLATE="templates/lithoSpore-vps-spore.yaml"
 
 BUILD_LOG="/tmp/lithoSpore-vps-build.log"
-sudo -E ./target/release/agent-reagents build "$TEMPLATE" 2>&1 | tee "$BUILD_LOG" || {
+AGENT_REAGENTS="${AGENT_REAGENTS:-$(command -v agent-reagents 2>/dev/null || echo ./target/release/agent-reagents)}"
+sudo -E "$AGENT_REAGENTS" build "$TEMPLATE" 2>&1 | tee "$BUILD_LOG" || {
     echo ""
     echo "ERROR: VM build failed. Checking if VM survived..."
     if sudo virsh domstate "$VM_NAME" 2>/dev/null | grep -q running; then

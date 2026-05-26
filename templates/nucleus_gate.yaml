@@ -44,14 +44,18 @@ build_steps:
       mkdir -p /opt/plasmidBin /opt/nucleus/data /opt/nucleus/logs
       mkdir -p /home/irongate/.config/biomeos/family
 
-  # Deploy provenance trio + NestGate from plasmidBin
+  # Deploy provenance trio + NestGate via plasmidBin fetch.sh (postPrimordial)
   - type: run_command
     command: |
-      cd /opt/plasmidBin
+      PLASMID_BIN="${PLASMID_BIN:-/opt/plasmidBin}"
+      ARCH="$(uname -m)"
       for primal in rhizocrypt loamspine sweetgrass nestgate; do
-        if [ -f "/mnt/plasmidBin/${primal}" ]; then
-          cp "/mnt/plasmidBin/${primal}" .
-          chmod +x "${primal}"
+        src="${PLASMID_BIN}/primals/${ARCH}/${primal}"
+        if [ -f "${src}" ]; then
+          cp "${src}" /opt/plasmidBin/
+          chmod +x "/opt/plasmidBin/${primal}"
+        elif command -v fetch.sh >/dev/null 2>&1; then
+          fetch.sh pull "${primal}" --arch "${ARCH}" --dest /opt/plasmidBin/
         fi
       done
 
