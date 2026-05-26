@@ -4,7 +4,7 @@
 //! Tries dpkg-query, dpkg -l, apt-cache policy, and reverse-dependency
 //! checks in sequence to eliminate false negatives.
 
-use super::types::*;
+use super::types::{PackageVerificationResult, VerificationMethod, shell_escape, PackageDetails};
 use crate::builder::vm_handle::VmHandle;
 use anyhow::{Result, anyhow};
 use std::fmt::Write;

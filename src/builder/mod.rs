@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn image_builder_from_manifest_timeout_and_accessors() {
         let m = valid_manifest_with_steps();
-        let b = ImageBuilder::from_manifest(m.clone())
+        let b = ImageBuilder::from_manifest(m)
             .with_timeout(Duration::from_secs(60))
             .with_plasmid_bin(std::path::PathBuf::from("/opt/plasmid"));
         assert_eq!(b.name(), "unit");

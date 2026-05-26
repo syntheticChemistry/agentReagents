@@ -407,7 +407,7 @@ mod tests {
             ssh_error: None,
             boot_diagnostics: None,
         };
-        let c = s.clone();
+        let c = s;
         assert_eq!(c.elapsed_secs, 3);
     }
 

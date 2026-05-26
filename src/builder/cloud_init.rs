@@ -248,7 +248,8 @@ impl ImageBuilder {
                                 name = name, url = url,
                             );
                             if let Some(key_url) = key_url {
-                                repo.push_str(&format!("gpgcheck=1\ngpgkey={}\n", key_url));
+                                use std::fmt::Write;
+                                let _ = write!(repo, "gpgcheck=1\ngpgkey={key_url}\n");
                             } else {
                                 repo.push_str("gpgcheck=0\n");
                             }

@@ -62,6 +62,7 @@ impl VmHandle {
             .map_err(|e| anyhow::anyhow!("russh connect failed: {}", e))?;
             *guard = Some(client);
         }
+        drop(guard);
         Ok(())
     }
 

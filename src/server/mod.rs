@@ -47,9 +47,7 @@ impl RegistrationSettings {
     /// `service_name` must be supplied by the caller (CLI, config, or tests).
     #[must_use]
     pub fn with_default_socket(service_name: String) -> Self {
-        let registry_socket = std::env::var("REGISTRY_SOCKET")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("/run/ecoPrimals/registry.sock"));
+        let registry_socket = std::env::var("REGISTRY_SOCKET").map_or_else(|_| PathBuf::from("/run/ecoPrimals/registry.sock"), PathBuf::from);
         Self {
             registry_socket,
             service_name,
@@ -428,7 +426,7 @@ mod tests {
     fn template_validate_valid_manifest_via_temp_file() {
         let tmp = tempfile::TempDir::new().expect("tmpdir");
         let path = tmp.path().join("m.yaml");
-        let yaml = r#"
+        let yaml = r"
 name: demo
 version: 1.0.0
 base_image: /tmp/x.img
@@ -438,7 +436,7 @@ resources:
   disk_gb: 30
 build_steps: []
 verification: {}
-"#;
+";
         std::fs::write(&path, yaml).expect("write");
 
         let r = handlers::template_validate(&serde_json::json!({ "path": path.to_str().unwrap() }));
@@ -527,7 +525,7 @@ verification: {}
     fn template_validate_manifest_validation_failure() {
         let tmp = tempfile::TempDir::new().expect("tmpdir");
         let path = tmp.path().join("low_mem.yaml");
-        let yaml = r#"
+        let yaml = r"
 name: demo
 version: 1.0.0
 base_image: /tmp/x.img
@@ -537,7 +535,7 @@ resources:
   disk_gb: 30
 build_steps: []
 verification: {}
-"#;
+";
         std::fs::write(&path, yaml).expect("write");
         let r = handlers::template_validate(&serde_json::json!({ "path": path.to_str().unwrap() }))
             .expect("result");

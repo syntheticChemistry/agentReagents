@@ -246,11 +246,9 @@ async fn verify_packages(
 
                     if let Some(ref raw) = result.details.raw_output
                         && !raw.is_empty()
-                    {
-                        if let Some(first_line) = raw.lines().next() {
+                        && let Some(first_line) = raw.lines().next() {
                             let _ = write!(msg, "Info: {}", first_line.trim());
                         }
-                    }
 
                     Some(msg)
                 };

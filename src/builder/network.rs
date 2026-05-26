@@ -41,7 +41,7 @@ impl NetworkMonitor {
     /// * `vm_ip` - IP address of the VM to monitor
     pub fn new(vm_ip: impl Into<String>) -> Self {
         let ip_str = vm_ip.into();
-        let addr = ip_str.parse::<IpAddr>().unwrap_or_else(|_| {
+        let addr = ip_str.parse::<IpAddr>().unwrap_or({
             // Fallback: treat as hostname, use unspecified for now —
             // TCP connect will use the original string via ToSocketAddrs.
             IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)

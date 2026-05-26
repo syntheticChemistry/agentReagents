@@ -23,7 +23,7 @@ use super::vm_handle::VmHandle;
 /// When running under `sudo`, the effective home is `/root` but the
 /// actual user's keys live under their home directory. We use `SUDO_USER`
 /// to resolve the original home, then probe for common key filenames.
-pub(crate) fn detect_ssh_private_key() -> Option<PathBuf> {
+pub fn detect_ssh_private_key() -> Option<PathBuf> {
     let home = if let Ok(sudo_user) = std::env::var("SUDO_USER") {
         PathBuf::from(format!("/home/{sudo_user}"))
     } else {

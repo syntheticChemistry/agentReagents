@@ -157,8 +157,10 @@ const fn default_timeout() -> u64 {
 /// from the base image name or from `/etc/os-release` inside the guest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum PackageManager {
     /// Auto-detect from base image or os-release (default).
+    #[default]
     Auto,
     /// Debian/Ubuntu APT.
     Apt,
@@ -170,11 +172,6 @@ pub enum PackageManager {
     Zypper,
 }
 
-impl Default for PackageManager {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
 
 impl PackageManager {
     /// Resolve `Auto` to a concrete manager based on the base image name.
@@ -220,9 +217,8 @@ impl PackageManager {
     pub fn check_installed_command(&self, pkg: &str) -> String {
         match self {
             Self::Apt | Self::Auto => format!("dpkg -s {} 2>/dev/null | grep -q 'Status: install ok installed'", pkg),
-            Self::Dnf => format!("rpm -q {} >/dev/null 2>&1", pkg),
+            Self::Dnf | Self::Zypper => format!("rpm -q {} >/dev/null 2>&1", pkg),
             Self::Pacman => format!("pacman -Qi {} >/dev/null 2>&1", pkg),
-            Self::Zypper => format!("rpm -q {} >/dev/null 2>&1", pkg),
         }
     }
 }
