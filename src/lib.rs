@@ -32,6 +32,7 @@
 //!         name: "gpu-desktop".to_string(),
 //!         version: "1.0.0".to_string(),
 //!         base_image: "/path/to/ubuntu-24.04.img".to_string(),
+//!         golden_image: None,
 //!         description: None,
 //!         resources: ResourceConfig {
 //!             memory_mb: 4096,

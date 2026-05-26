@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
         name: "popos-cosmic-desktop".to_string(),
         version: "1.0.0".to_string(),
         base_image: base_image.path.to_string_lossy().to_string(),
+        golden_image: None,
         description: Some("COSMIC Desktop build".to_string()),
         resources: ResourceConfig {
             memory_mb: 4096,

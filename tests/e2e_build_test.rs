@@ -16,7 +16,7 @@ async fn test_full_ubuntu_build() -> anyhow::Result<()> {
         .init();
 
     // Load manifest
-    let manifest_path = PathBuf::from("templates/ubuntu-24-04-desktop.yaml");
+    let manifest_path = PathBuf::from("templates/ubuntu24-minimal-baseline.yaml");
     let manifest = TemplateManifest::from_yaml_file(&manifest_path)?;
 
     // Get SSH key

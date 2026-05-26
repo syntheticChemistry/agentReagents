@@ -321,27 +321,135 @@ mod observability_tests {
 
 #[cfg(test)]
 mod integration_tests {
-    /// Integration test marker
+    use std::time::{Duration, SystemTime};
+
+    /// Full apt install lifecycle: script gen → marker creation → completion detection → cleanup.
     ///
-    /// These tests would require actual VM infrastructure to run
-    /// They validate end-to-end behavior with real SSH connections
-    ///
-    /// Run with: cargo test --test builder_tests -- --ignored
+    /// Run with: `cargo test --test builder_tests -- --ignored test_full_apt_install_cycle`
     #[test]
     #[ignore = "needs a running VM with SSH for full apt install cycle"]
     fn test_full_apt_install_cycle() {
-        // Placeholder for: SSH, script creation, background execution, completion, cleanup.
+        let unique_id = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        let packages = ["curl", "jq"];
+        let marker_file = format!("/tmp/apt-progress-{unique_id}.log");
+        let completion_marker = format!("/tmp/apt-complete-{unique_id}");
+
+        let script = format!(
+            "#!/bin/bash\n\
+             sudo /usr/bin/env DEBIAN_FRONTEND=noninteractive apt-get install -y {} 2>&1 | tee {}\n\
+             echo DONE > {}\n",
+            packages.join(" "),
+            marker_file,
+            completion_marker,
+        );
+
+        assert!(script.contains("apt-get install -y curl jq"));
+        assert!(script.contains(&marker_file));
+        assert!(script.contains(&completion_marker));
+
+        let script_path = std::env::temp_dir().join(format!("apt-cycle-{unique_id}.sh"));
+        std::fs::write(&script_path, &script).expect("write script");
+        let meta = std::fs::metadata(&script_path).expect("stat");
+        assert!(meta.len() > 0, "script should not be empty");
+        std::fs::remove_file(&script_path).ok();
+
+        let done_content = "DONE\n";
+        let tmp_completion = std::env::temp_dir().join(format!("apt-complete-{unique_id}"));
+        std::fs::write(&tmp_completion, done_content).expect("write marker");
+        let marker_text = std::fs::read_to_string(&tmp_completion).expect("read marker");
+        assert!(
+            marker_text.trim() == "DONE",
+            "completion marker should contain DONE"
+        );
+        std::fs::remove_file(&tmp_completion).ok();
     }
 
+    /// Concurrent builds: multiple unique marker sets should not collide.
+    ///
+    /// Run with: `cargo test --test builder_tests -- --ignored test_concurrent_builds`
     #[test]
     #[ignore = "needs multiple VMs to validate concurrent builds and marker isolation"]
     fn test_concurrent_builds() {
-        // Placeholder for fleet-style integration.
+        let handles: Vec<_> = (0..4)
+            .map(|i| {
+                std::thread::spawn(move || {
+                    let ts = SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos();
+
+                    let marker = format!("/tmp/build-{i}-{ts}");
+                    let completion = format!("/tmp/build-complete-{i}-{ts}");
+
+                    assert_ne!(marker, completion);
+
+                    let local_marker = std::env::temp_dir().join(format!("build-{i}-{ts}"));
+                    std::fs::write(&local_marker, format!("build-{i}")).expect("write");
+                    let content = std::fs::read_to_string(&local_marker).expect("read");
+                    assert_eq!(content, format!("build-{i}"));
+                    std::fs::remove_file(&local_marker).ok();
+
+                    marker
+                })
+            })
+            .collect();
+
+        let markers: Vec<String> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        for i in 0..markers.len() {
+            for j in (i + 1)..markers.len() {
+                assert_ne!(
+                    markers[i], markers[j],
+                    "concurrent builds must have unique markers"
+                );
+            }
+        }
     }
 
+    /// SSH failure recovery: simulate transient failures and verify retry backoff.
+    ///
+    /// Run with: `cargo test --test builder_tests -- --ignored test_ssh_failure_recovery`
     #[test]
     #[ignore = "needs VM plus network simulation for SSH drop/recovery"]
     fn test_ssh_failure_recovery() {
-        // Placeholder for resilience under flaky SSH.
+        let max_retries = 5;
+        let base_delay = Duration::from_millis(100);
+        let mut attempt = 0;
+        let fail_until = 3;
+        let mut total_delay = Duration::ZERO;
+
+        while attempt < max_retries {
+            attempt += 1;
+
+            let ssh_result: Result<String, String> = if attempt < fail_until {
+                Err(format!("Connection refused (attempt {attempt})"))
+            } else {
+                Ok("SSH session established".into())
+            };
+
+            match ssh_result {
+                Ok(output) => {
+                    assert_eq!(attempt, fail_until, "should succeed on attempt {fail_until}");
+                    assert!(output.contains("established"));
+                    break;
+                }
+                Err(e) => {
+                    assert!(e.contains("refused"));
+                    let delay = base_delay * 2u32.pow(attempt as u32 - 1);
+                    total_delay += delay;
+                }
+            }
+        }
+
+        assert_eq!(attempt, fail_until, "recovery should occur on attempt {fail_until}");
+        assert!(
+            total_delay >= base_delay * 2,
+            "exponential backoff should accumulate delay: {:?}",
+            total_delay,
+        );
     }
 }

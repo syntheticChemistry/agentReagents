@@ -14,7 +14,8 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{error, info, warn};
 
-use crate::templates::{TemplateManifest, TemplateRegistry};
+mod handlers;
+
 
 /// Settings for capability-based registration with a Unix-socket service registry.
 ///
@@ -153,16 +154,18 @@ pub async fn run_server(
     if standalone {
         info!("running in standalone mode (no registry registration)");
     } else if let Ok(family_id) = std::env::var("FAMILY_ID") {
-        info!(
-            "FAMILY_ID={family_id} — registry registration not yet implemented (socket={}, service={})",
-            registration.registry_socket.display(),
-            registration.service_name,
-        );
+        match register_with_registry(&registration, &family_id, addr).await {
+            Ok(()) => info!(
+                "registered with registry as '{}' (family={family_id})",
+                registration.service_name,
+            ),
+            Err(e) => warn!(
+                "registry registration failed (degrading to standalone): {e}"
+            ),
+        }
     } else {
         warn!(
-            "FAMILY_ID not set and not standalone — degrading to standalone mode (would use socket={}, service={})",
-            registration.registry_socket.display(),
-            registration.service_name,
+            "FAMILY_ID not set and not standalone — degrading to standalone mode"
         );
     }
 
@@ -178,6 +181,67 @@ pub async fn run_server(
             }
         });
     }
+}
+
+/// Register this server with a Unix-socket service registry via JSON-RPC 2.0.
+///
+/// Sends a `registry.register` call containing the service name, listen address,
+/// family ID, and declared capabilities. Non-fatal — the server continues if registration fails.
+async fn register_with_registry(
+    settings: &RegistrationSettings,
+    family_id: &str,
+    listen_addr: SocketAddr,
+) -> anyhow::Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixStream;
+
+    let stream = UnixStream::connect(&settings.registry_socket)
+        .await
+        .map_err(|e| anyhow::anyhow!(
+            "cannot connect to registry at {}: {e}",
+            settings.registry_socket.display(),
+        ))?;
+
+    let (reader, mut writer) = stream.into_split();
+
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "registry.register",
+        "params": {
+            "service": settings.service_name,
+            "address": listen_addr.to_string(),
+            "family_id": family_id,
+            "capabilities": [
+                "image.build",
+                "image.list",
+                "template.validate",
+                "health.check",
+            ],
+            "version": env!("CARGO_PKG_VERSION"),
+        },
+        "id": 1,
+    });
+
+    let mut payload = serde_json::to_vec(&request)?;
+    payload.push(b'\n');
+    writer.write_all(&payload).await?;
+
+    let mut reader = BufReader::new(reader);
+    let mut line = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        reader.read_line(&mut line),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("registry response timeout"))??;
+
+    let resp: serde_json::Value = serde_json::from_str(line.trim())?;
+    if let Some(err) = resp.get("error") {
+        anyhow::bail!("registry rejected registration: {err}");
+    }
+
+    info!("registry acknowledged registration: {}", resp);
+    Ok(())
 }
 
 async fn handle_connection(stream: TcpStream, state: &ServerState) -> anyhow::Result<()> {
@@ -240,156 +304,18 @@ type MethodResult = Result<serde_json::Value, MethodError>;
 
 fn dispatch_method(method: &str, params: &serde_json::Value, state: &ServerState) -> MethodResult {
     match method {
-        "health.liveness" => health_liveness(),
-        "health.readiness" => health_readiness(state),
-        "health.check" => health_check(state),
+        "health.liveness" => handlers::health_liveness(),
+        "health.readiness" => handlers::health_readiness(state),
+        "health.check" => handlers::health_check(state),
 
-        "registry.list" => registry_list(state),
+        "registry.list" => handlers::registry_list(state),
 
-        "template.validate" => template_validate(params),
+        "template.validate" => handlers::template_validate(params),
 
-        "image.list" => image_list(state),
+        "image.list" => handlers::image_list(state),
 
         _ => Err(MethodError::NotFound),
     }
-}
-
-// ---------------------------------------------------------------------------
-// health.*
-// ---------------------------------------------------------------------------
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "Uniform MethodResult for JSON-RPC handler table"
-)]
-fn health_liveness() -> MethodResult {
-    Ok(serde_json::json!({
-        "status": "alive",
-        "service": "agent-reagents",
-        "version": env!("CARGO_PKG_VERSION"),
-    }))
-}
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "Uniform MethodResult for JSON-RPC handler table"
-)]
-fn health_readiness(state: &ServerState) -> MethodResult {
-    let registry_exists = state.registry_dir.exists();
-    Ok(serde_json::json!({
-        "status": if registry_exists { "ready" } else { "not_ready" },
-        "registry_dir": state.registry_dir.display().to_string(),
-    }))
-}
-
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "Uniform MethodResult for JSON-RPC handler table"
-)]
-fn health_check(state: &ServerState) -> MethodResult {
-    let registry_ok = TemplateRegistry::new(&state.registry_dir).is_ok();
-    let template_count = TemplateRegistry::new(&state.registry_dir)
-        .map(|r| r.list_templates().len())
-        .unwrap_or(0);
-
-    Ok(serde_json::json!({
-        "status": if registry_ok { "healthy" } else { "degraded" },
-        "registry": registry_ok,
-        "templates": template_count,
-        "version": env!("CARGO_PKG_VERSION"),
-    }))
-}
-
-// ---------------------------------------------------------------------------
-// registry.*
-// ---------------------------------------------------------------------------
-
-fn registry_list(state: &ServerState) -> MethodResult {
-    let registry = TemplateRegistry::new(&state.registry_dir)
-        .map_err(|e| MethodError::Internal(format!("registry init: {e}")))?;
-
-    let templates: Vec<serde_json::Value> = registry
-        .list_templates()
-        .iter()
-        .map(|t| {
-            serde_json::json!({
-                "name": t.name,
-                "version": t.version,
-                "size_bytes": t.size_bytes,
-                "verified": t.verified,
-            })
-        })
-        .collect();
-
-    Ok(serde_json::json!({ "templates": templates }))
-}
-
-// ---------------------------------------------------------------------------
-// template.*
-// ---------------------------------------------------------------------------
-
-fn template_validate(params: &serde_json::Value) -> MethodResult {
-    let path_str = params
-        .get("path")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| MethodError::InvalidParams("missing \"path\" string".into()))?;
-
-    let path = std::path::Path::new(path_str);
-    if !path.exists() {
-        return Ok(serde_json::json!({
-            "valid": false,
-            "error": format!("file not found: {path_str}"),
-        }));
-    }
-
-    match TemplateManifest::from_yaml_file(path) {
-        Ok(manifest) => match manifest.validate() {
-            Ok(()) => Ok(serde_json::json!({
-                "valid": true,
-                "name": manifest.name,
-                "version": manifest.version,
-                "build_steps": manifest.build_steps.len(),
-            })),
-            Err(e) => Ok(serde_json::json!({
-                "valid": false,
-                "error": e.to_string(),
-            })),
-        },
-        Err(e) => Ok(serde_json::json!({
-            "valid": false,
-            "error": format!("parse error: {e}"),
-        })),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// image.*
-// ---------------------------------------------------------------------------
-
-fn image_list(state: &ServerState) -> MethodResult {
-    let images_dir = state.registry_dir.join("templates");
-    if !images_dir.exists() {
-        return Ok(serde_json::json!({ "images": [] }));
-    }
-
-    let images: Vec<serde_json::Value> = std::fs::read_dir(&images_dir)
-        .map_err(|e| MethodError::Internal(format!("read dir: {e}")))?
-        .filter_map(std::result::Result::ok)
-        .filter(|e| {
-            e.path()
-                .extension()
-                .is_some_and(|ext| ext == "qcow2" || ext == "img")
-        })
-        .filter_map(|e| {
-            let meta = e.metadata().ok()?;
-            Some(serde_json::json!({
-                "name": e.file_name().to_string_lossy(),
-                "size_bytes": meta.len(),
-            }))
-        })
-        .collect();
-
-    Ok(serde_json::json!({ "images": images }))
 }
 
 #[cfg(test)]
@@ -421,7 +347,7 @@ mod tests {
 
     #[test]
     fn test_health_liveness() {
-        let result = health_liveness().expect("liveness");
+        let result = handlers::health_liveness().expect("liveness");
         assert_eq!(result["status"], "alive");
         assert_eq!(result["service"], "agent-reagents");
     }
@@ -448,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_template_validate_missing_path() {
-        let result = template_validate(&serde_json::json!({}));
+        let result = handlers::template_validate(&serde_json::json!({}));
         assert!(matches!(result, Err(MethodError::InvalidParams(_))));
     }
 
@@ -492,7 +418,7 @@ mod tests {
 
     #[test]
     fn template_validate_nonexistent_path_returns_valid_false() {
-        let r = template_validate(&serde_json::json!({ "path": "/no/such/file.yaml" }));
+        let r = handlers::template_validate(&serde_json::json!({ "path": "/no/such/file.yaml" }));
         let v = r.expect("ok result");
         assert_eq!(v["valid"], false);
         assert!(v["error"].as_str().unwrap().contains("not found"));
@@ -515,7 +441,7 @@ verification: {}
 "#;
         std::fs::write(&path, yaml).expect("write");
 
-        let r = template_validate(&serde_json::json!({ "path": path.to_str().unwrap() }));
+        let r = handlers::template_validate(&serde_json::json!({ "path": path.to_str().unwrap() }));
         let v = r.expect("ok");
         assert_eq!(v["valid"], true);
         assert_eq!(v["name"], "demo");
@@ -544,7 +470,7 @@ verification: {}
         let state = ServerState {
             registry_dir: PathBuf::from("/nonexistent/path/that/does/not/exist/reagents"),
         };
-        let h = health_check(&state).expect("health");
+        let h = handlers::health_check(&state).expect("health");
         assert_eq!(h["status"], "degraded");
     }
 
@@ -554,7 +480,7 @@ verification: {}
         let state = ServerState {
             registry_dir: tmp.path().to_path_buf(),
         };
-        let h = health_check(&state).expect("health");
+        let h = handlers::health_check(&state).expect("health");
         assert_eq!(h["status"], "healthy");
         assert_eq!(h["registry"], true);
         assert_eq!(h["templates"], 0);
@@ -565,7 +491,7 @@ verification: {}
         let state = ServerState {
             registry_dir: PathBuf::from("/this/path/should/not/exist/agent-reagents-readiness"),
         };
-        let r = health_readiness(&state).expect("readiness");
+        let r = handlers::health_readiness(&state).expect("readiness");
         assert_eq!(r["status"], "not_ready");
     }
 
@@ -587,7 +513,7 @@ verification: {}
         let tmp = tempfile::TempDir::new().expect("tmpdir");
         let path = tmp.path().join("broken.yaml");
         std::fs::write(&path, "this is not: [[[[ valid yaml").expect("write");
-        let r = template_validate(&serde_json::json!({ "path": path.to_str().unwrap() }))
+        let r = handlers::template_validate(&serde_json::json!({ "path": path.to_str().unwrap() }))
             .expect("result");
         assert_eq!(r["valid"], false);
         let err = r["error"].as_str().expect("err str");
@@ -613,7 +539,7 @@ build_steps: []
 verification: {}
 "#;
         std::fs::write(&path, yaml).expect("write");
-        let r = template_validate(&serde_json::json!({ "path": path.to_str().unwrap() }))
+        let r = handlers::template_validate(&serde_json::json!({ "path": path.to_str().unwrap() }))
             .expect("result");
         assert_eq!(r["valid"], false);
         let err = r["error"].as_str().expect("err");
@@ -682,5 +608,59 @@ verification: {}
         assert_eq!(v2["result"]["status"], "ready");
 
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn register_with_registry_sends_correct_payload() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use tokio::net::UnixListener;
+
+        let tmp = tempfile::TempDir::new().expect("tmpdir");
+        let sock_path = tmp.path().join("registry.sock");
+
+        let listener = UnixListener::bind(&sock_path).expect("bind UDS");
+
+        let settings = RegistrationSettings::new(sock_path, "agent-reagents".into());
+        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+
+        let mock_registry = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let (reader, mut writer) = stream.into_split();
+            let mut lines = BufReader::new(reader);
+            let mut line = String::new();
+            lines.read_line(&mut line).await.expect("read");
+
+            let req: serde_json::Value = serde_json::from_str(line.trim()).expect("parse");
+            assert_eq!(req["jsonrpc"], "2.0");
+            assert_eq!(req["method"], "registry.register");
+            assert_eq!(req["params"]["service"], "agent-reagents");
+            assert_eq!(req["params"]["address"], "127.0.0.1:9999");
+            assert!(req["params"]["capabilities"].as_array().unwrap().len() >= 4);
+
+            let resp = serde_json::json!({"jsonrpc":"2.0","result":{"registered":true},"id":1});
+            let mut payload = serde_json::to_vec(&resp).unwrap();
+            payload.push(b'\n');
+            writer.write_all(&payload).await.expect("write");
+
+            req
+        });
+
+        register_with_registry(&settings, "test-family", addr)
+            .await
+            .expect("registration should succeed");
+
+        let captured_req = mock_registry.await.expect("mock registry task");
+        assert_eq!(captured_req["params"]["family_id"], "test-family");
+    }
+
+    #[tokio::test]
+    async fn register_with_registry_fails_gracefully_on_missing_socket() {
+        let settings = RegistrationSettings::new(
+            PathBuf::from("/nonexistent/registry.sock"),
+            "test".into(),
+        );
+        let addr: SocketAddr = "127.0.0.1:9999".parse().unwrap();
+        let result = register_with_registry(&settings, "fam", addr).await;
+        assert!(result.is_err());
     }
 }

@@ -49,6 +49,12 @@ enum Commands {
         /// SSH public key file
         #[arg(short = 'k', long)]
         ssh_key_file: Option<PathBuf>,
+
+        /// Save a golden image after cloud-init completes.
+        /// The golden qcow2 is written to `images/golden/<name>.qcow2` and
+        /// can be referenced via `golden_image:` in the manifest for instant boots.
+        #[arg(long)]
+        save_golden: bool,
     },
 
     /// Verify a template
@@ -112,8 +118,9 @@ async fn main() -> Result<()> {
             manifest,
             ssh_key,
             ssh_key_file,
+            save_golden,
         } => {
-            cmd_build(&cli.registry, &manifest, ssh_key, ssh_key_file).await?;
+            cmd_build(&cli.registry, &manifest, ssh_key, ssh_key_file, save_golden).await?;
         }
 
         Commands::Verify { name } => {
@@ -233,6 +240,7 @@ async fn cmd_build(
     manifest_path: &Path,
     ssh_key: Option<String>,
     ssh_key_file: Option<PathBuf>,
+    save_golden: bool,
 ) -> Result<()> {
     use agent_reagents::builder::ImageBuilder;
 
@@ -265,14 +273,18 @@ async fn cmd_build(
             .trim()
             .to_string()
     } else {
-        // Try default SSH key
-        let default_key = dirs::home_dir()
-            .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?
-            .join(".ssh/id_rsa.pub");
+        // Try default SSH keys in preference order
+        let home = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
+        let candidates = [
+            home.join(".ssh/id_ed25519.pub"),
+            home.join(".ssh/id_rsa.pub"),
+            home.join(".ssh/id_ecdsa.pub"),
+        ];
 
-        if default_key.exists() {
-            info!("Using default SSH key: {}", default_key.display());
-            std::fs::read_to_string(default_key)
+        if let Some(key_path) = candidates.iter().find(|p| p.exists()) {
+            info!("Using default SSH key: {}", key_path.display());
+            std::fs::read_to_string(key_path)
                 .context("Failed to read default SSH key")?
                 .trim()
                 .to_string()
@@ -280,6 +292,16 @@ async fn cmd_build(
             anyhow::bail!("No SSH key provided. Use --ssh-key or --ssh-key-file");
         }
     };
+
+    // Check for golden image first — skips cloud-init entirely
+    if let Some(ref golden_path) = manifest.golden_image {
+        let golden = PathBuf::from(golden_path);
+        if golden.exists() {
+            println!("⚡ Golden image found: {} — fast boot path", golden.display());
+        } else {
+            info!("Golden image configured but not found: {} — using base image", golden.display());
+        }
+    }
 
     // Get base image path
     let base_image = PathBuf::from(&manifest.base_image);
@@ -314,6 +336,35 @@ async fn cmd_build(
     println!();
     println!("Verification:");
     println!("{}", result.verification.summary());
+
+    if save_golden {
+        let golden_dir = manifest_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("images/golden");
+        std::fs::create_dir_all(&golden_dir)
+            .context("Failed to create golden image directory")?;
+
+        let stem = manifest_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("golden");
+        let golden_path = golden_dir.join(format!("{stem}.qcow2"));
+
+        info!("Saving golden image to {}", golden_path.display());
+        std::fs::copy(&result.template_path, &golden_path).context(
+            "Failed to copy template to golden image",
+        )?;
+
+        println!(
+            "⚡ Golden image saved: {}",
+            golden_path.display()
+        );
+        println!(
+            "   Add `golden_image: {}` to your manifest for instant boots.",
+            golden_path.display()
+        );
+    }
 
     Ok(())
 }
@@ -398,15 +449,11 @@ async fn cleanup_orphaned_vms() -> Result<()> {
     // Collect VM names to clean (avoid borrow issues)
     let vm_names: Vec<String> = orphans.iter().map(|e| e.name.clone()).collect();
 
-    let uri = std::env::var("BENCHSCALE_LIBVIRT_URI")
-        .unwrap_or_else(|_| "qemu:///system".to_string());
+    let uri = benchscale::backend::libvirt_uri();
     let conn = Connect::open(Some(&uri))
         .context("Failed to connect to libvirt")?;
 
-    let images_dir = PathBuf::from(
-        std::env::var("BENCHSCALE_VM_IMAGES_DIR")
-            .unwrap_or_else(|_| "/var/lib/libvirt/images".to_string()),
-    );
+    let images_dir = benchscale::constants::paths::libvirt_images_dir();
 
     let mut cleaned = 0;
     for vm_name in vm_names {

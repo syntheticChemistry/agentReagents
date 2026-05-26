@@ -243,6 +243,7 @@ mod tests {
             name: name.to_string(),
             version: "1.0.0".to_string(),
             base_image: "ubuntu.img".to_string(),
+            golden_image: None,
             description: None,
             resources: ResourceConfig {
                 memory_mb: 2048,

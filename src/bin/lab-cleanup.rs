@@ -6,8 +6,7 @@ use virt::connect::Connect;
 use virt::domain::Domain;
 
 fn libvirt_uri() -> String {
-    std::env::var("BENCHSCALE_LIBVIRT_URI")
-        .unwrap_or_else(|_| "qemu:///system".to_string())
+    benchscale::backend::libvirt_uri()
 }
 
 #[derive(Parser)]
@@ -305,10 +304,7 @@ async fn cleanup_vm(conn: &Connect, vm_name: &str) -> Result<()> {
         }
     }
     
-    let images_dir = std::path::PathBuf::from(
-        std::env::var("BENCHSCALE_VM_IMAGES_DIR")
-            .unwrap_or_else(|_| "/var/lib/libvirt/images".to_string()),
-    );
+    let images_dir = benchscale::constants::paths::libvirt_images_dir();
 
     std::fs::remove_file(images_dir.join(format!("{vm_name}.qcow2"))).ok();
     std::fs::remove_file(images_dir.join(format!("{vm_name}-cidata.iso"))).ok();

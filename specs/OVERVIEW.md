@@ -62,9 +62,10 @@ agentReagents/
 │   └── GUIDANCE.md        # Developer guidance
 │
 ├── templates/             # VM manifests
-│   ├── ubuntu-24-04-desktop.yaml
+│   ├── ubuntu24-minimal-baseline.yaml
 │   ├── popos-24-cosmic.yaml
-│   └── template-example.yaml
+│   ├── lithoSpore-validation.yaml
+│   └── gates/             # Gate provisioning templates
 │
 └── README.md              # Getting started guide
 ```
@@ -104,8 +105,8 @@ Simple VM builds from manifests:
 
 ```bash
 # Build a VM from a manifest
-agent-reagents build templates/ubuntu-24-04-desktop.yaml \
-    --ssh-key "$(cat ~/.ssh/id_rsa.pub)"
+agent-reagents build templates/ubuntu24-minimal-baseline.yaml \
+    --ssh-key "$(cat ~/.ssh/id_ed25519.pub)"
 
 # VM is created, provisioned, and verified automatically
 ```

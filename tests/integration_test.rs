@@ -9,7 +9,7 @@ use tempfile::TempDir;
 
 #[test]
 fn test_template_manifest_load() {
-    let manifest_path = PathBuf::from("templates/ubuntu-24-04-desktop.yaml");
+    let manifest_path = PathBuf::from("templates/ubuntu24-minimal-baseline.yaml");
 
     if !manifest_path.exists() {
         println!("Skipping test - manifest file not found");
@@ -19,7 +19,7 @@ fn test_template_manifest_load() {
     let manifest =
         TemplateManifest::from_yaml_file(&manifest_path).expect("Failed to load manifest");
 
-    assert_eq!(manifest.name, "ubuntu-24-04-desktop");
+    assert_eq!(manifest.name, "ubuntu24-minimal-baseline");
     assert_eq!(manifest.version, "1.0.0");
     assert!(manifest.resources.memory_mb >= 512);
     assert!(manifest.resources.vcpus >= 1);
@@ -53,9 +53,9 @@ fn test_template_registry_creation() {
 #[test]
 fn test_all_manifests_valid() {
     let manifest_files = [
-        "templates/ubuntu-24-04-desktop.yaml",
+        "templates/ubuntu24-minimal-baseline.yaml",
         "templates/popos-24-cosmic.yaml",
-        "templates/ubuntu-24-04-rustdesk.yaml",
+        "templates/lithoSpore-validation.yaml",
     ];
 
     for manifest_file in &manifest_files {
@@ -80,7 +80,7 @@ fn test_all_manifests_valid() {
 #[test]
 fn test_manifest_round_trip() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let manifest_path = PathBuf::from("templates/ubuntu-24-04-desktop.yaml");
+    let manifest_path = PathBuf::from("templates/ubuntu24-minimal-baseline.yaml");
 
     if !manifest_path.exists() {
         println!("Skipping test - manifest file not found");

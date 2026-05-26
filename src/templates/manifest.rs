@@ -20,6 +20,13 @@ pub struct TemplateManifest {
     /// Base image to build from
     pub base_image: String,
 
+    /// Pre-provisioned golden image (post-cloud-init, SSH-ready).
+    /// When present and the file exists, the builder skips cloud-init entirely
+    /// and boots directly from this image — reducing startup from minutes to seconds.
+    /// Created by `agent-reagents build --save-golden`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub golden_image: Option<String>,
+
     /// Description
     pub description: Option<String>,
 
@@ -566,6 +573,7 @@ mod tests {
             name: "test".to_string(),
             version: "1.0.0".to_string(),
             base_image: "ubuntu-24.04.img".to_string(),
+            golden_image: None,
             description: None,
             resources: ResourceConfig {
                 memory_mb: 2048,
@@ -603,6 +611,7 @@ mod tests {
             name: String::new(),
             version: "1.0.0".to_string(),
             base_image: "x.img".to_string(),
+            golden_image: None,
             description: None,
             resources: ResourceConfig {
                 memory_mb: 2048,
@@ -651,6 +660,7 @@ mod tests {
             name: "t".to_string(),
             version: "2.1.0".to_string(),
             base_image: "ubuntu.img".to_string(),
+            golden_image: None,
             description: Some("d".to_string()),
             resources: ResourceConfig {
                 memory_mb: 1024,

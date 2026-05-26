@@ -1,18 +1,21 @@
 name: lithoSpore-validation
-version: 1.0.0
+version: 1.4.0
 description: |
   Minimal VM for lithoSpore USB artifact validation.
   Proves the Targeted GuideStone runs on a clean system
   with zero pre-installed dependencies (musl-static binaries).
-  Optionally validates Tier 1 (Python) if python3 is available.
+  Includes airgap simulation: after artifact deployment, the
+  default route is dropped so validation runs fully offline.
+  v1.4.0: 75 checks across 7 modules, deploy-report TOML output,
+  self-test (23 checks), tier detection, BLAKE3 verification.
 
 base_image: images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
 
 resources:
   memory_mb: 2048
   vcpus: 2
-  disk_gb: 10
-  timeout_secs: 600
+  disk_gb: 20
+  timeout_secs: 900
 
 users:
   - name: litho
@@ -25,34 +28,36 @@ users:
     ssh_authorized_keys: []
 
 build_steps:
-  - type: wait_cloud_init
-    timeout_secs: 300
-
   - type: install_packages
     packages:
       - openssh-server
-      - curl
+      - qemu-guest-agent
 
   - type: enable_service
     service: ssh
+
+  - type: wait_cloud_init
+    timeout_secs: 600
 
   - type: create_file
     path: /etc/lithoSpore-gate
     content: |
       gate=lithoSpore-validation
-      version=1.0.0
+      version=1.4.0
       purpose=guidestone-validation
       tier_max=2
+      modules=7
+      checks=75
     mode: "0644"
 
 post_boot_steps:
   - type: run_command
-    command: mkdir -p /opt/lithoSpore && chmod 0755 /opt/lithoSpore
+    command: mkdir -p /opt/lithoSpore && chmod 0755 /opt/lithoSpore && chown litho:litho /opt/lithoSpore
+    timeout_secs: 30
 
 verification:
   required_packages:
     - openssh-server
-    - curl
 
   required_services:
     - ssh

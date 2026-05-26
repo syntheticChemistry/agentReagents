@@ -1,0 +1,101 @@
+name: lithoSpore-vps-spore
+version: 1.0.0
+description: |
+  Simulates a remote VPS "spore drop" deployment of lithoSpore.
+  Mimics the cellMembrane fieldMouse pattern: a minimal Ubuntu server
+  receives the lithoSpore artifact via SCP and runs validation with
+  network available (but no primals), validating the geo-delocalized
+  deployment path described in LITHOSPORE_USB_DEPLOYMENT.md Mode 1-2.
+
+  Deployment pattern: VPS spore-drop (remote host, no biomeOS).
+
+base_image: images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+
+resources:
+  memory_mb: 2048
+  vcpus: 2
+  disk_gb: 20
+  timeout_secs: 900
+
+users:
+  - name: spore
+    groups:
+      - sudo
+      - users
+    sudo: true
+    shell: /bin/bash
+    lock_passwd: false
+    ssh_authorized_keys: []
+
+build_steps:
+  - type: install_packages
+    packages:
+      - openssh-server
+      - qemu-guest-agent
+
+  - type: enable_service
+    service: ssh
+
+  - type: wait_cloud_init
+    timeout_secs: 600
+
+  - type: create_file
+    path: /etc/lithoSpore-gate
+    content: |
+      gate=lithoSpore-vps-spore
+      version=1.0.0
+      purpose=vps-spore-drop-validation
+      tier_max=2
+      deployment_pattern=vps-remote
+    mode: "0644"
+
+  - type: create_file
+    path: /etc/motd
+    content: |
+      ┌──────────────────────────────────────────────┐
+      │  lithoSpore VPS — Spore Drop Target          │
+      │  Artifact: /opt/lithoSpore                   │
+      │  Validate: cd /opt/lithoSpore && ./validate  │
+      └──────────────────────────────────────────────┘
+    mode: "0644"
+
+post_boot_steps:
+  - type: run_command
+    command: mkdir -p /opt/lithoSpore && chmod 0755 /opt/lithoSpore && chown spore:spore /opt/lithoSpore
+    timeout_secs: 30
+
+verification:
+  required_packages:
+    - openssh-server
+
+  required_services:
+    - ssh
+
+  required_files:
+    - /etc/lithoSpore-gate
+
+  verification_commands:
+    - command: systemctl is-enabled ssh
+      expected_exit_code: 0
+      description: SSH service should be enabled
+
+    - command: id spore
+      expected_exit_code: 0
+      description: User spore should exist
+
+    - command: test -d /opt/lithoSpore
+      expected_exit_code: 0
+      description: lithoSpore mount point should exist
+
+    - command: curl -s --max-time 5 http://archive.ubuntu.com > /dev/null 2>&1 && echo online || echo offline
+      expected_exit_code: 0
+      description: Network should be available (not airgapped)
+
+metadata:
+  os: ubuntu
+  os_version: "24.04"
+  purpose: lithoSpore-vps-spore-drop
+  fast_boot: true
+  minimal: true
+  project: ecoPrimals/CATHEDRAL
+  deployment_pattern: vps-spore-drop

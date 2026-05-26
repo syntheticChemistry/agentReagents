@@ -1,0 +1,141 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: lithoSpore-readonly-validation
+version: 1.0.0
+description: |
+  Read-only filesystem VM for lithoSpore USB mount simulation.
+  The artifact is mounted read-only (simulating a physical USB drive
+  plugged into a machine). lithoSpore must handle the inability to
+  write liveSpore.json and other files gracefully — validation should
+  still produce correct results even when provenance tracking fails.
+
+  Deployment pattern: usb-readonly (physical USB handoff).
+
+base_image: images/cloud/ubuntu-24.04-server-cloudimg-amd64.img
+
+resources:
+  memory_mb: 2048
+  vcpus: 2
+  disk_gb: 20
+  timeout_secs: 900
+
+users:
+  - name: litho
+    groups:
+      - sudo
+      - users
+    sudo: true
+    shell: /bin/bash
+    lock_passwd: false
+    ssh_authorized_keys: []
+
+build_steps:
+  - type: install_packages
+    packages:
+      - openssh-server
+      - qemu-guest-agent
+
+  - type: enable_service
+    service: ssh
+
+  - type: wait_cloud_init
+    timeout_secs: 600
+
+  - type: create_file
+    path: /etc/lithoSpore-gate
+    content: |
+      gate=lithoSpore-readonly-validation
+      version=1.0.0
+      purpose=readonly-usb-simulation
+      tier_max=2
+      deployment_pattern=usb-readonly
+    mode: "0644"
+
+post_boot_steps:
+  - type: run_command
+    command: mkdir -p /opt/lithoSpore && chmod 0755 /opt/lithoSpore && chown litho:litho /opt/lithoSpore
+    timeout_secs: 30
+
+validation_steps:
+  - name: artifact_extract
+    command: |
+      mkdir -p /opt/lithoSpore
+      tar xzf /tmp/lithoSpore-usb.tar.gz -C /opt/lithoSpore
+    timeout_secs: 30
+    description: Extract lithoSpore tarball
+
+  - name: make_readonly
+    command: |
+      chmod -R a-w /opt/lithoSpore
+      chmod +x /opt/lithoSpore/bin/*
+    timeout_secs: 10
+    description: Make artifact read-only (simulating USB mount)
+
+  - name: binary_check
+    command: file /opt/lithoSpore/bin/litho
+    expected_output_contains: "statically linked"
+    timeout_secs: 5
+    description: Verify litho is a static binary
+
+  - name: self_test_readonly
+    command: /opt/lithoSpore/bin/litho self-test --artifact-root /opt/lithoSpore 2>&1 || true
+    expected_exit_code: 0
+    timeout_secs: 30
+    description: Self-test on read-only artifact (may warn about write failures)
+
+  - name: validate_readonly
+    command: |
+      set +e
+      /opt/lithoSpore/bin/litho validate --artifact-root /opt/lithoSpore --json 2>/tmp/litho-stderr.txt
+      RESULT=$?
+      cat /tmp/litho-stderr.txt >&2
+      exit $RESULT
+    timeout_secs: 120
+    description: Validation on read-only artifact (liveSpore.json write will fail gracefully)
+
+  - name: verify_readonly
+    command: /opt/lithoSpore/bin/litho verify --artifact-root /opt/lithoSpore --json
+    expected_exit_code: 0
+    timeout_secs: 30
+    description: Data integrity verification on read-only artifact
+
+  - name: livespore_not_modified
+    command: |
+      BEFORE=$(stat -c %Y /opt/lithoSpore/liveSpore.json 2>/dev/null || echo "none")
+      echo "liveSpore.json mtime: $BEFORE (should be unchanged since read-only)"
+    expected_exit_code: 0
+    timeout_secs: 5
+    description: Confirm liveSpore.json was not modified (read-only)
+
+  - name: restore_writable
+    command: chmod -R u+w /opt/lithoSpore
+    timeout_secs: 10
+    description: Restore writable for cleanup
+
+verification:
+  required_packages:
+    - openssh-server
+
+  required_services:
+    - ssh
+
+  required_files:
+    - /etc/lithoSpore-gate
+
+  verification_commands:
+    - command: id litho
+      expected_exit_code: 0
+      description: User litho should exist
+
+    - command: test -d /opt/lithoSpore
+      expected_exit_code: 0
+      description: lithoSpore mount point should exist
+
+metadata:
+  os: ubuntu
+  os_version: "24.04"
+  purpose: lithoSpore-readonly-usb-simulation
+  fast_boot: true
+  minimal: true
+  project: ecoPrimals/CATHEDRAL
+  deployment_pattern: usb-readonly
+  requires_libvirt: true

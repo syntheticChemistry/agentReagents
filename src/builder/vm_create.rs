@@ -8,7 +8,7 @@ use benchscale::backend::LibvirtBackend;
 use benchscale::backend::libvirt::VmGuard;
 use benchscale::backend::senescence::SenescenceMonitor;
 use benchscale::config::{BenchScaleConfig, MonitoringConfig, TimeoutConfig};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::time::Duration;
 use tracing::{info, warn};
@@ -17,6 +17,35 @@ use super::ImageBuilder;
 use super::network::NetworkMonitor;
 use super::post_boot;
 use super::vm_handle::VmHandle;
+
+/// Detect the SSH private key path for the invoking user.
+///
+/// When running under `sudo`, the effective home is `/root` but the
+/// actual user's keys live under their home directory. We use `SUDO_USER`
+/// to resolve the original home, then probe for common key filenames.
+pub(crate) fn detect_ssh_private_key() -> Option<PathBuf> {
+    let home = if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+        PathBuf::from(format!("/home/{sudo_user}"))
+    } else {
+        dirs::home_dir()?
+    };
+
+    let candidates = [
+        home.join(".ssh/id_ed25519"),
+        home.join(".ssh/id_rsa"),
+        home.join(".ssh/id_ecdsa"),
+    ];
+
+    for key in &candidates {
+        if key.exists() {
+            info!("Detected SSH private key: {}", key.display());
+            return Some(key.clone());
+        }
+    }
+
+    warn!("No SSH private key found — senescence SSH probes may fail under sudo");
+    None
+}
 
 impl ImageBuilder {
     /// Create the builder VM using benchScale with manifest configuration
@@ -47,8 +76,28 @@ impl ImageBuilder {
             .context("libvirt infrastructure health check failed")?;
         info!("✅ Infrastructure health verified");
 
-        // Get base image path from manifest
-        let base_image = Path::new(&self.manifest.base_image);
+        // Golden image fast-path: if a golden image is configured and exists on disk,
+        // use it instead of the raw cloud image. The golden image already has cloud-init
+        // baked in so the VM boots SSH-ready in ~15 seconds.
+        let base_image = if let Some(ref golden) = self.manifest.golden_image {
+            let golden_path = PathBuf::from(golden);
+            if golden_path.exists() {
+                info!(
+                    "Using golden image: {} (skipping cloud-init)",
+                    golden_path.display()
+                );
+                golden_path
+            } else {
+                info!(
+                    "Golden image not found ({}), falling back to base image",
+                    golden_path.display()
+                );
+                PathBuf::from(&self.manifest.base_image)
+            }
+        } else {
+            PathBuf::from(&self.manifest.base_image)
+        };
+        let base_image = base_image.as_path();
 
         let pci_devices: Vec<benchscale::VfioPassthrough> = self
             .manifest
@@ -165,12 +214,18 @@ impl ImageBuilder {
             ..Default::default()
         };
 
-        let monitor = Arc::new(SenescenceMonitor::from_config(
-            vm_name,
+        let mut monitor = SenescenceMonitor::from_config(
+            vm_name.clone(),
             actual_ip.clone(),
             mac_address,
             &config.monitoring,
-        ));
+        );
+        if let Some(key_path) = detect_ssh_private_key() {
+            monitor = monitor.with_ssh_identity(key_path);
+        }
+        let qga = benchscale::backend::qga::QgaClient::for_vm(&vm_name);
+        monitor = monitor.with_qga(qga);
+        let monitor = Arc::new(monitor);
 
         // Start background monitoring
         // Phase 1A: Use helper method with proper logging

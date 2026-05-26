@@ -1,0 +1,108 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: lithoSpore-container-validation
+version: 1.0.0
+description: |
+  Docker-based lithoSpore artifact validation.
+  Runs the full Tier 2 validation inside a clean Ubuntu 24.04 container
+  with no pre-installed Rust toolchain — proving the musl-static binaries
+  work on a bare system. No libvirt/KVM required.
+
+  Deployment pattern: container isolation (CI-friendly).
+
+base_image: docker.io/library/ubuntu:24.04
+
+resources:
+  memory_mb: 1024
+  timeout_secs: 300
+
+container_config:
+  runtime: docker
+  network: none
+  read_only_rootfs: false
+  tmpfs:
+    - /tmp:size=256m
+
+build_steps:
+  - type: install_packages
+    packages:
+      - ca-certificates
+
+  - type: create_file
+    path: /etc/lithoSpore-gate
+    content: |
+      gate=lithoSpore-container-validation
+      version=1.0.0
+      purpose=container-guidestone-validation
+      tier_max=2
+      deployment_pattern=container-airgap
+    mode: "0644"
+
+validation_steps:
+  - name: artifact_extract
+    command: |
+      mkdir -p /opt/lithoSpore
+      tar xzf /tmp/lithoSpore-usb.tar.gz -C /opt/lithoSpore
+    timeout_secs: 30
+    description: Extract lithoSpore tarball
+
+  - name: binary_check
+    command: file /opt/lithoSpore/bin/litho
+    expected_output_contains: "statically linked"
+    timeout_secs: 5
+    description: Verify litho is a static binary
+
+  - name: self_test
+    command: /opt/lithoSpore/bin/litho self-test --artifact-root /opt/lithoSpore
+    expected_exit_code: 0
+    timeout_secs: 30
+    description: Artifact integrity self-test (23 checks)
+
+  - name: tier_detection
+    command: /opt/lithoSpore/bin/litho tier --artifact-root /opt/lithoSpore
+    expected_exit_code: 0
+    timeout_secs: 10
+    description: Tier detection (should report Tier 2 available)
+
+  - name: full_validation
+    command: /opt/lithoSpore/bin/litho validate --artifact-root /opt/lithoSpore --json
+    expected_exit_code: 0
+    timeout_secs: 120
+    description: Full Tier 2 validation (7 modules, 75 checks)
+
+  - name: data_verify
+    command: /opt/lithoSpore/bin/litho verify --artifact-root /opt/lithoSpore --json
+    expected_exit_code: 0
+    timeout_secs: 30
+    description: Data integrity verification (BLAKE3 hashes)
+
+  - name: livespore_written
+    command: |
+      test -f /opt/lithoSpore/liveSpore.json && \
+      python3 -c "import json; d=json.load(open('/opt/lithoSpore/liveSpore.json')); print(f'{len(d)} entries')" 2>/dev/null || \
+      cat /opt/lithoSpore/liveSpore.json | head -1
+    expected_exit_code: 0
+    timeout_secs: 5
+    description: liveSpore.json provenance was updated
+
+verification:
+  required_files:
+    - /etc/lithoSpore-gate
+
+  verification_commands:
+    - command: test -d /opt/lithoSpore/bin
+      expected_exit_code: 0
+      description: lithoSpore binary directory exists
+
+    - command: test -f /opt/lithoSpore/.biomeos-spore
+      expected_exit_code: 0
+      description: biomeOS spore marker exists
+
+metadata:
+  os: ubuntu
+  os_version: "24.04"
+  purpose: lithoSpore-container-validation
+  fast_boot: true
+  minimal: true
+  project: ecoPrimals/CATHEDRAL
+  deployment_pattern: container-airgap
+  requires_libvirt: false

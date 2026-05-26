@@ -201,18 +201,21 @@ async fn execute_post_boot_step(
     Ok(())
 }
 
-/// Execute a command with timeout
+/// Execute a command with timeout.
+///
+/// A `timeout_secs` of 0 is treated as "use default" (120s), not "instant".
 async fn execute_with_timeout(
     vm: &VmHandle,
     command: &str,
     timeout_secs: u64,
     username: &str,
 ) -> Result<()> {
-    let duration = Duration::from_secs(timeout_secs);
+    let effective = if timeout_secs == 0 { 120 } else { timeout_secs };
+    let duration = Duration::from_secs(effective);
 
     timeout(duration, vm.ssh_exec(username, command))
         .await
-        .with_context(|| format!("Command timed out after {}s", timeout_secs))??;
+        .with_context(|| format!("Command timed out after {effective}s"))??;
 
     Ok(())
 }

@@ -137,6 +137,10 @@ impl ImageBuilder {
             }
         }
 
+        // Always install qemu-guest-agent for virtio-serial health checks.
+        // This enables QGA probes before SSH is available.
+        builder = builder.package("qemu-guest-agent");
+
         // SUDO-FREE EVOLUTION: Extract packages from post_boot_steps and install via cloud-init
         // This moves standard apt packages from post-boot (sudo) to cloud-init (native root)
         let cloud_init_packages = self.extract_cloud_init_packages();
@@ -323,6 +327,7 @@ mod tests {
             name: "t".to_string(),
             version: "1.0.0".to_string(),
             base_image: "base.img".to_string(),
+            golden_image: None,
             description: None,
             resources: ResourceConfig {
                 memory_mb: 2048,

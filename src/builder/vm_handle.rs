@@ -131,14 +131,29 @@ impl VmHandle {
         self.ssh_exec_cli(user, cmd).await
     }
 
+    /// Build common SSH CLI args with identity detection for sudo contexts.
+    fn ssh_cli_args(user: &str, ip: &str) -> Vec<String> {
+        let mut args = vec![
+            "-o".to_string(), "StrictHostKeyChecking=no".to_string(),
+            "-o".to_string(), "UserKnownHostsFile=/dev/null".to_string(),
+            "-o".to_string(), "LogLevel=ERROR".to_string(),
+            "-o".to_string(), "BatchMode=yes".to_string(),
+        ];
+        if let Some(key) = super::vm_create::detect_ssh_private_key() {
+            args.push("-i".to_string());
+            args.push(key.display().to_string());
+        }
+        args.push(format!("{user}@{ip}"));
+        args
+    }
+
     /// Fallback: execute via system `ssh` CLI.
     async fn ssh_exec_cli(&self, user: &str, cmd: &str) -> Result<String> {
+        let mut args = Self::ssh_cli_args(user, &self.node.ip_address);
+        args.push(cmd.to_string());
+
         let output = tokio::process::Command::new("ssh")
-            .arg("-o").arg("StrictHostKeyChecking=no")
-            .arg("-o").arg("UserKnownHostsFile=/dev/null")
-            .arg("-o").arg("LogLevel=ERROR")
-            .arg(format!("{}@{}", user, self.node.ip_address))
-            .arg(cmd)
+            .args(&args)
             .output()
             .await
             .context("Failed to execute SSH command")?;
@@ -397,7 +412,11 @@ impl VmHandle {
         let mut cmd = tokio::process::Command::new("scp");
         cmd.arg("-o").arg("StrictHostKeyChecking=no")
             .arg("-o").arg("UserKnownHostsFile=/dev/null")
-            .arg("-o").arg("LogLevel=ERROR");
+            .arg("-o").arg("LogLevel=ERROR")
+            .arg("-o").arg("BatchMode=yes");
+        if let Some(key) = super::vm_create::detect_ssh_private_key() {
+            cmd.arg("-i").arg(key);
+        }
         if recursive { cmd.arg("-r"); }
         cmd.arg(&remote_spec).arg(local_path.as_os_str());
         let output = cmd.output().await.context("failed to execute scp")?;
@@ -446,15 +465,16 @@ impl VmHandle {
         &self, local_path: &std::path::Path, user: &str, remote_path: &str,
     ) -> Result<()> {
         let remote_spec = format!("{}@{}:{}", user, self.node.ip_address, remote_path);
-        let output = tokio::process::Command::new("scp")
-            .arg("-o").arg("StrictHostKeyChecking=no")
+        let mut cmd = tokio::process::Command::new("scp");
+        cmd.arg("-o").arg("StrictHostKeyChecking=no")
             .arg("-o").arg("UserKnownHostsFile=/dev/null")
             .arg("-o").arg("LogLevel=ERROR")
-            .arg(local_path.as_os_str())
-            .arg(&remote_spec)
-            .output()
-            .await
-            .context("failed to execute scp")?;
+            .arg("-o").arg("BatchMode=yes");
+        if let Some(key) = super::vm_create::detect_ssh_private_key() {
+            cmd.arg("-i").arg(key);
+        }
+        cmd.arg(local_path.as_os_str()).arg(&remote_spec);
+        let output = cmd.output().await.context("failed to execute scp")?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             anyhow::bail!("scp push failed (exit {}): {}", output.status.code().unwrap_or(-1), stderr);
