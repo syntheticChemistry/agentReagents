@@ -110,11 +110,8 @@ pub struct PciPassthroughConfig {
     pub no_flr: bool,
 
     /// How the device should be attached to the VM.
-    /// - `cold` (default): embedded in domain XML from boot.
-    /// - `hot_managed`: hot-attached, libvirt manages driver binding.
-    /// - `hot_unmanaged`: hot-attached, caller manages driver binding.
-    #[serde(default = "default_attach_mode")]
-    pub attach_mode: String,
+    #[serde(default)]
+    pub attach_mode: PciAttachMode,
 
     /// Enable or disable the ROM BAR. Disabling prevents VGA ROM from
     /// hanging the VM on boot for secondary GPUs.
@@ -130,9 +127,19 @@ pub struct PciPassthroughConfig {
     pub qemu_properties: std::collections::HashMap<String, String>,
 }
 
-fn default_attach_mode() -> String {
-    "cold".to_string()
+/// PCI device attach mode — type-safe replacement for stringly-typed "cold"/"hot_managed"/"hot_unmanaged".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PciAttachMode {
+    /// Embedded in domain XML from boot.
+    #[default]
+    Cold,
+    /// Hot-attached after boot; libvirt manages driver binding.
+    HotManaged,
+    /// Hot-attached after boot; caller manages driver binding.
+    HotUnmanaged,
 }
+
 fn default_rom_bar_flag() -> bool {
     true
 }

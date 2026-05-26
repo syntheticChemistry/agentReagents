@@ -8,7 +8,7 @@ use benchscale::backend::LibvirtBackend;
 use benchscale::backend::libvirt::VmGuard;
 use benchscale::backend::senescence::SenescenceMonitor;
 use benchscale::config::{BenchScaleConfig, MonitoringConfig, TimeoutConfig};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::Duration;
 use tracing::{info, warn};
@@ -104,10 +104,11 @@ impl ImageBuilder {
             .pci_passthrough
             .iter()
             .map(|p| {
-                let attach_mode = match p.attach_mode.as_str() {
-                    "hot_managed" => benchscale::AttachMode::HotManaged,
-                    "hot_unmanaged" => benchscale::AttachMode::HotUnmanaged,
-                    _ => if p.no_flr {
+                use crate::templates::manifest::PciAttachMode;
+                let attach_mode = match p.attach_mode {
+                    PciAttachMode::HotManaged => benchscale::AttachMode::HotManaged,
+                    PciAttachMode::HotUnmanaged => benchscale::AttachMode::HotUnmanaged,
+                    PciAttachMode::Cold => if p.no_flr {
                         benchscale::AttachMode::HotUnmanaged
                     } else {
                         benchscale::AttachMode::Cold
@@ -192,7 +193,6 @@ impl ImageBuilder {
         // Step 1: Advanced senescence monitoring for cloud-init (DHCP-aware)
         // Use continuous health monitoring instead of polling
         info!("⏳ Starting VM senescence monitoring for cloud-init...");
-        println!("⏳ Starting advanced VM monitoring (senescence tracking enabled)...");
 
         let vm_name = node.name.clone();
 
@@ -240,43 +240,32 @@ impl ImageBuilder {
             "Waiting for cloud-init with {}min timeout",
             cloud_init_timeout.as_secs() / 60
         );
-        println!(
-            "   ⏱️  Timeout: {}min | Monitoring: ping, SSH, cloud-init status",
-            cloud_init_timeout.as_secs() / 60
-        );
-
         match monitor
             .wait_for_cloud_init(cloud_init_timeout, |metrics| {
-                // Progress callback - called periodically
-                println!(
-                    "   📊 Health: {:?} | Ping: {} | SSH: {} | Uptime: {}s | Failures: {}",
-                    metrics.health,
-                    if metrics.ping_ok { "✓" } else { "✗" },
-                    if metrics.ssh_ok { "✓" } else { "✗" },
-                    metrics.uptime.as_secs(),
-                    metrics.consecutive_failures
+                info!(
+                    health = ?metrics.health,
+                    ping = metrics.ping_ok,
+                    ssh = metrics.ssh_ok,
+                    uptime_s = metrics.uptime.as_secs(),
+                    failures = metrics.consecutive_failures,
+                    "VM health update"
                 );
 
                 if let Some(ref cloud_init) = metrics.cloud_init {
-                    println!(
-                        "   🔧 Cloud-init: {} {}",
-                        cloud_init.status,
-                        cloud_init.detail.as_deref().unwrap_or("")
+                    info!(
+                        status = %cloud_init.status,
+                        detail = cloud_init.detail.as_deref().unwrap_or(""),
+                        "cloud-init progress"
                     );
                 }
             })
             .await
         {
             Ok(()) => {
-                info!("✅ Cloud-init completed successfully");
-                println!("✅ Cloud-init completed successfully!");
+                info!("Cloud-init completed successfully");
             }
             Err(e) => {
-                warn!(
-                    "⚠️ Cloud-init monitoring ended: {} (VM may still be usable)",
-                    e
-                );
-                println!("⚠️  Cloud-init monitoring ended, but VM appears to be running");
+                warn!(error = %e, "Cloud-init monitoring ended (VM may still be usable)");
 
                 // Check if VM is at least responsive
                 if !monitor.is_healthy().await {
@@ -333,8 +322,7 @@ impl ImageBuilder {
 
         // Execute post-boot steps (the "add heat-sensitive compounds" phase)
         if !self.manifest.post_boot_steps.is_empty() {
-            info!("🧪 Starting post-boot synthesis phase...");
-            println!("🧪 Executing post-boot steps (laboratory stepwise synthesis)...");
+            info!("Starting post-boot synthesis phase");
 
             // Phase 1A: Use helper method with proper logging
             let username = self.get_username_with_fallback();
@@ -355,7 +343,7 @@ impl ImageBuilder {
             )
                 .await
                 .context("Failed to execute post-boot steps")?;
-            println!("✅ Post-boot synthesis complete!");
+            info!("Post-boot synthesis complete");
         }
 
         Ok((vm_handle, guard))

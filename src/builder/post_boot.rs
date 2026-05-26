@@ -74,11 +74,7 @@ async fn execute_post_boot_step(
                 pm,
                 timeout_secs
             );
-            println!(
-                "Installing {} packages: {}",
-                packages.len(),
-                packages.join(", ")
-            );
+            info!(count = packages.len(), "Installing packages: {}", packages.join(", "));
 
             let result = if *retry {
                 let command = format!(
@@ -92,8 +88,7 @@ async fn execute_post_boot_step(
             };
 
             result.with_context(|| format!("Failed to install packages: {:?}", packages))?;
-            info!("     Packages installed");
-            println!("Step complete!");
+            info!("Packages installed");
         }
 
         PostBootStep::RunCommand {
