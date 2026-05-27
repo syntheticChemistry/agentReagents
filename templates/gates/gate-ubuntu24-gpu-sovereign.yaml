@@ -70,7 +70,7 @@ build_steps:
 
 post_boot_steps:
   - type: run_command
-    command: "mkdir -p /opt/biomeos/bin /opt/coralreef/glowplug /opt/reagents/drivers /var/log/biomeos"
+    command: "mkdir -p /opt/plasmidBin /opt/coralreef/glowplug /opt/reagents/drivers /var/log/biomeos"
     description: "Create directory structure"
 
   - type: run_command
@@ -80,12 +80,12 @@ post_boot_steps:
       SRC="${PLASMID_BIN}/primals/${ARCH}"
       for primal in songbird beardog; do
         if [ -f "${SRC}/${primal}" ]; then
-          cp "${SRC}/${primal}" /opt/biomeos/bin/
+          cp "${SRC}/${primal}" /opt/plasmidBin/
         elif command -v fetch.sh >/dev/null 2>&1; then
-          fetch.sh pull "${primal}" --arch "${ARCH}" --dest /opt/biomeos/bin/
+          fetch.sh pull "${primal}" --arch "${ARCH}" --dest /opt/plasmidBin/
         fi
       done
-      chmod +x /opt/biomeos/bin/* 2>/dev/null || true
+      chmod +x /opt/plasmidBin/* 2>/dev/null || true
     description: "Deploy core primals from plasmidBin (postPrimordial)"
 
   - type: create_file

@@ -43,21 +43,21 @@ build_steps:
     service: ssh
 
   - type: run_command
-    command: "ufw allow 22/tcp && ufw allow 9100:9200/tcp && ufw --force enable"
-    description: "Configure firewall for SSH and primal ports"
+    command: "ufw allow 22/tcp && ufw allow 9100/tcp && ufw allow 9200/tcp && ufw allow 9500/tcp && ufw --force enable"
+    description: "Configure firewall for SSH and Tower+NestGate ports"
 
   - type: create_file
     path: /etc/biomeos/gate.conf
     content: |
       GATE_TYPE=biomeos
       GATE_ROLE=standard
-      PRIMAL_PORT_RANGE=9100-9200
+      PRIMAL_PORT_RANGE=9100-9900
     mode: "0644"
 
 post_boot_steps:
   - type: run_command
-    command: "mkdir -p /opt/biomeos/bin /etc/biomeos /var/log/biomeos"
-    description: "Create biomeOS directory structure"
+    command: "mkdir -p /opt/plasmidBin /etc/biomeos /var/log/biomeos"
+    description: "Create deployment directory structure"
 
   - type: run_command
     command: |
@@ -66,12 +66,12 @@ post_boot_steps:
       SRC="${PLASMID_BIN}/primals/${ARCH}"
       for primal in songbird beardog nestgate; do
         if [ -f "${SRC}/${primal}" ]; then
-          cp "${SRC}/${primal}" /opt/biomeos/bin/
+          cp "${SRC}/${primal}" /opt/plasmidBin/
         elif command -v fetch.sh >/dev/null 2>&1; then
-          fetch.sh pull "${primal}" --arch "${ARCH}" --dest /opt/biomeos/bin/
+          fetch.sh pull "${primal}" --arch "${ARCH}" --dest /opt/plasmidBin/
         fi
       done
-      chmod +x /opt/biomeos/bin/* 2>/dev/null || true
+      chmod +x /opt/plasmidBin/* 2>/dev/null || true
     description: "Deploy primals from plasmidBin (postPrimordial)"
 
   - type: create_file
@@ -84,7 +84,7 @@ post_boot_steps:
 
       [Service]
       Type=simple
-      ExecStart=/opt/biomeos/bin/songbird server --port 9100 --standalone
+      ExecStart=/opt/plasmidBin/songbird server --port 9200 --standalone
       Restart=on-failure
       RestartSec=5
       Environment=RUST_LOG=info
@@ -103,7 +103,7 @@ post_boot_steps:
 
       [Service]
       Type=simple
-      ExecStart=/opt/biomeos/bin/beardog server --port 9101 --standalone
+      ExecStart=/opt/plasmidBin/beardog server --port 9100 --standalone
       Restart=on-failure
       RestartSec=5
       Environment=RUST_LOG=info
@@ -122,7 +122,7 @@ post_boot_steps:
 
       [Service]
       Type=simple
-      ExecStart=/opt/biomeos/bin/nestgate server --port 9102 --standalone
+      ExecStart=/opt/plasmidBin/nestgate server --port 9500 --standalone
       Restart=on-failure
       RestartSec=5
       Environment=RUST_LOG=info
@@ -153,10 +153,10 @@ verification:
     - ssh
   required_files:
     - /etc/biomeos/gate.conf
-    - /opt/biomeos/bin
+    - /opt/plasmidBin
   verification_commands:
-    - command: "test -d /opt/biomeos/bin"
-      description: "biomeOS binary directory exists"
+    - command: "test -d /opt/plasmidBin"
+      description: "plasmidBin binary directory exists"
       expected_exit_code: 0
     - command: "ufw status | grep -q active"
       description: "Firewall is active"

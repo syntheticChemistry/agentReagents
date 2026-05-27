@@ -84,7 +84,7 @@ build_steps:
       After=network.target
 
       [Service]
-      ExecStart=/opt/plasmidBin/rhizocrypt --port 9700 --data-dir /opt/nucleus/data/rhizocrypt
+      ExecStart=/opt/plasmidBin/rhizocrypt --port 9601 --data-dir /opt/nucleus/data/rhizocrypt
       Restart=on-failure
       User=irongate
 
@@ -100,7 +100,7 @@ build_steps:
       After=network.target rhizocrypt.service
 
       [Service]
-      ExecStart=/opt/plasmidBin/loamspine --port 9710 --data-dir /opt/nucleus/data/loamspine
+      ExecStart=/opt/plasmidBin/loamspine --port 9700 --data-dir /opt/nucleus/data/loamspine
       Restart=on-failure
       User=irongate
 
@@ -116,7 +116,7 @@ build_steps:
       After=network.target loamspine.service
 
       [Service]
-      ExecStart=/opt/plasmidBin/sweetgrass --port 9720 --data-dir /opt/nucleus/data/sweetgrass
+      ExecStart=/opt/plasmidBin/sweetgrass --port 9850 --data-dir /opt/nucleus/data/sweetgrass
       Restart=on-failure
       User=irongate
 
@@ -133,7 +133,7 @@ build_steps:
   # Wait for primals to be ready
   - type: run_command
     command: |
-      for port in 9500 9700 9710 9720; do
+      for port in 9500 9601 9700 9850; do
         for i in $(seq 1 30); do
           if curl -s "http://127.0.0.1:${port}" >/dev/null 2>&1; then
             break
@@ -148,7 +148,7 @@ build_steps:
       Nucleus Gate (Provenance Trio) - Ready
       Date: {{ timestamp }}
       Primals: nestgate rhizocrypt loamspine sweetgrass
-      Ports: 9500 9700 9710 9720
+      Ports: 9500 9601 9700 9850
       Signal: nest_store
     mode: "0644"
 
@@ -165,11 +165,11 @@ verification:
     - sweetgrass
   connectivity:
     - port: 9500
+    - port: 9601
     - port: 9700
-    - port: 9710
-    - port: 9720
+    - port: 9850
   custom_checks:
-    - command: "curl -s http://127.0.0.1:9700 | jq -r '.result.status // .error'"
+    - command: "curl -s http://127.0.0.1:9601 | jq -r '.result.status // .error'"
       expect_contains: "alive"
     - command: "test -f /opt/nucleus/GATE_READY"
       expect_exit_code: 0
