@@ -338,14 +338,12 @@ async fn gather_boot_diagnostics(vm: &VmHandle, username: &str) -> Result<BootDi
             "systemctl is-active multi-user.target 2>/dev/null",
         )
         .await
-        .map(|s| s.trim() == "active")
-        .unwrap_or(false);
+        .is_ok_and(|s| s.trim() == "active");
 
     let graphical = vm
         .ssh_exec(username, "systemctl is-active graphical.target 2>/dev/null")
         .await
-        .map(|s| s.trim() == "active")
-        .unwrap_or(false);
+        .is_ok_and(|s| s.trim() == "active");
 
     // Check SSH service
     let ssh_active = vm
@@ -354,8 +352,7 @@ async fn gather_boot_diagnostics(vm: &VmHandle, username: &str) -> Result<BootDi
             "systemctl is-active ssh 2>/dev/null || systemctl is-active sshd 2>/dev/null",
         )
         .await
-        .map(|s| s.trim() == "active")
-        .unwrap_or(false);
+        .is_ok_and(|s| s.trim() == "active");
 
     // Check network
     let network = vm
@@ -364,8 +361,7 @@ async fn gather_boot_diagnostics(vm: &VmHandle, username: &str) -> Result<BootDi
             "ip addr show | grep 'inet ' | grep -v '127.0.0.1' | wc -l",
         )
         .await
-        .map(|s| s.trim().parse::<u32>().unwrap_or(0) > 0)
-        .unwrap_or(false);
+        .is_ok_and(|s| s.trim().parse::<u32>().unwrap_or(0) > 0);
 
     // Get recent boot messages
     let boot_messages = vm

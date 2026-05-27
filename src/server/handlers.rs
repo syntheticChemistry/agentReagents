@@ -44,8 +44,7 @@ pub(super) fn health_readiness(state: &ServerState) -> MethodResult {
 pub(super) fn health_check(state: &ServerState) -> MethodResult {
     let registry_ok = TemplateRegistry::new(&state.registry_dir).is_ok();
     let template_count = TemplateRegistry::new(&state.registry_dir)
-        .map(|r| r.list_templates().len())
-        .unwrap_or(0);
+        .map_or(0, |r| r.list_templates().len());
 
     Ok(serde_json::json!({
         "status": if registry_ok { "healthy" } else { "degraded" },
