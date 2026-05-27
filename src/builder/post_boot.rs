@@ -12,6 +12,8 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{info, warn};
 
+const DEFAULT_SSH_CMD_TIMEOUT_SECS: u64 = 120;
+
 /// Execute all post-boot steps on a VM.
 #[tracing::instrument(skip(vm, steps))]
 pub async fn execute_post_boot_steps(
@@ -194,14 +196,18 @@ async fn execute_post_boot_step(
 
 /// Execute a command with timeout.
 ///
-/// A `timeout_secs` of 0 is treated as "use default" (120s), not "instant".
+/// A `timeout_secs` of 0 is treated as "use default", not "instant".
 async fn execute_with_timeout(
     vm: &VmHandle,
     command: &str,
     timeout_secs: u64,
     username: &str,
 ) -> Result<()> {
-    let effective = if timeout_secs == 0 { 120 } else { timeout_secs };
+    let effective = if timeout_secs == 0 {
+        DEFAULT_SSH_CMD_TIMEOUT_SECS
+    } else {
+        timeout_secs
+    };
     let duration = Duration::from_secs(effective);
 
     timeout(duration, vm.ssh_exec(username, command))

@@ -77,7 +77,6 @@
 #![allow(clippy::uninlined_format_args)]
 #![allow(clippy::must_use_candidate)]
 #![allow(clippy::doc_markdown)]
-#![allow(clippy::unused_async)]
 #![allow(clippy::return_self_not_must_use)]
 #![allow(clippy::missing_const_for_fn)]
 #![allow(clippy::struct_excessive_bools)]
@@ -93,10 +92,6 @@ pub mod packages;
 pub mod server;
 /// Template manifests, registry, and YAML definitions.
 pub mod templates;
-
-// Discovery: Use standard solutions (mDNS, DNS-SD, Consul)
-// NOT creating custom substrate - primal philosophy is to use existing capabilities
-// Archived: src/discovery.rs (was using phantom primal-substrate dependency)
 
 // Re-export commonly used types
 pub use builder::{BuildResult, BuildState, ImageBuilder, VerificationResult};

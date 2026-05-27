@@ -10,6 +10,11 @@ use std::fmt::Write;
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
+const DEFAULT_REBOOT_TIMEOUT_SECS: u64 = 120;
+const MAX_REBOOT_TIMEOUT_SECS: u64 = 600;
+const REBOOT_POLL_INTERVAL_SECS: u64 = 5;
+const POST_REBOOT_STABILIZE_SECS: u64 = 10;
+
 /// Detailed reboot state information for diagnostics
 #[derive(Debug, Clone)]
 pub struct RebootState {
@@ -58,11 +63,11 @@ pub struct RebootConfig {
 impl Default for RebootConfig {
     fn default() -> Self {
         Self {
-            initial_wait_secs: 120,      // 2 minutes initial wait
-            max_wait_secs: 600,          // 10 minutes max (desktop environments)
-            check_interval_secs: 5,      // Check every 5 seconds
-            stabilization_wait_secs: 10, // 10 seconds stabilization
-            gather_diagnostics: true,    // Always gather diagnostics
+            initial_wait_secs: DEFAULT_REBOOT_TIMEOUT_SECS,
+            max_wait_secs: MAX_REBOOT_TIMEOUT_SECS,
+            check_interval_secs: REBOOT_POLL_INTERVAL_SECS,
+            stabilization_wait_secs: POST_REBOOT_STABILIZE_SECS,
+            gather_diagnostics: true,
         }
     }
 }
