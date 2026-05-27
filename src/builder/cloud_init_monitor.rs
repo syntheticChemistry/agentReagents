@@ -2,6 +2,7 @@
 //! Cloud-init monitoring and JSON status parsing.
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Cloud-init execution status
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,6 +40,16 @@ impl CloudInitStatus {
     }
 }
 
+impl fmt::Display for CloudInitStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Running { stage } => write!(f, "running ({stage})"),
+            Self::Done => write!(f, "done"),
+            Self::Error { message } => write!(f, "error: {message}"),
+        }
+    }
+}
+
 /// Cloud-init execution stages
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CloudInitStage {
@@ -59,6 +70,19 @@ pub enum CloudInitStage {
 
     /// Unknown/other stage
     Unknown(String),
+}
+
+impl fmt::Display for CloudInitStage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Init => write!(f, "init"),
+            Self::Config => write!(f, "config"),
+            Self::Final => write!(f, "final"),
+            Self::ModulesConfig => write!(f, "modules-config"),
+            Self::ModulesFinal => write!(f, "modules-final"),
+            Self::Unknown(s) => write!(f, "{s}"),
+        }
+    }
 }
 
 /// Cloud-init status as returned by `cloud-init status --format=json`

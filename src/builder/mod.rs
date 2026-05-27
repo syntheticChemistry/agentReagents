@@ -273,16 +273,16 @@ impl ImageBuilder {
 
             // Try to get cloud-init status
             match vm.get_cloud_init_status(username).await {
-                Ok(status) => {
-                    if status.finished {
+                Ok(info) => {
+                    if info.finished() {
                         info!("Cloud-init completed successfully");
                         self.transition_to(BuildState::Complete);
                         break;
-                    } else if !status.errors.is_empty() {
-                        error!("Cloud-init errors: {:?}", status.errors);
-                        bail!("Cloud-init failed: {:?}", status.errors);
+                    } else if !info.errors.is_empty() {
+                        error!("Cloud-init errors: {:?}", info.errors);
+                        bail!("Cloud-init failed: {:?}", info.errors);
                     }
-                    info!("Cloud-init running: {}", status.status);
+                    info!("Cloud-init running: {}", info.status);
                 }
                 Err(e) => {
                     // SSH might not be ready yet

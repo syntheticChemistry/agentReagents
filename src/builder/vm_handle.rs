@@ -20,17 +20,27 @@ pub struct VmHandle {
     ssh_session: Arc<Mutex<Option<SshClient>>>,
 }
 
-/// Cloud-init status from SSH query
+/// Cloud-init status from SSH query.
+///
+/// Uses the typed `CloudInitStatus` enum instead of raw strings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CloudInitStatusInfo {
-    /// Raw status string from `cloud-init status` or JSON.
-    pub status: String,
-    /// Whether cloud-init reports still running.
-    pub running: bool,
-    /// Whether cloud-init reports finished successfully.
-    pub finished: bool,
+    /// Typed status parsed from `cloud-init status --format=json`.
+    pub status: super::cloud_init_monitor::CloudInitStatus,
     /// Non-fatal or fatal messages from the status output.
     pub errors: Vec<String>,
+}
+
+impl CloudInitStatusInfo {
+    /// Whether cloud-init reports still running.
+    pub fn running(&self) -> bool {
+        self.status.is_running()
+    }
+
+    /// Whether cloud-init reports finished successfully.
+    pub fn finished(&self) -> bool {
+        self.status.is_done()
+    }
 }
 
 impl VmHandle {
@@ -203,28 +213,21 @@ impl VmHandle {
             .join("\n")
     }
 
-    /// Get cloud-init status
+    /// Get cloud-init status, parsed into the typed `CloudInitStatus` enum.
     pub async fn get_cloud_init_status(&self, user: &str) -> Result<CloudInitStatusInfo> {
+        use super::cloud_init_monitor::{CloudInitStatusJson, CloudInitStatus};
+
         let output = self
             .ssh_exec(user, "cloud-init status --format=json")
             .await?;
 
-        let status: serde_json::Value =
+        let json: CloudInitStatusJson =
             serde_json::from_str(&output).context("Failed to parse cloud-init status")?;
 
-        Ok(CloudInitStatusInfo {
-            status: status["status"].as_str().unwrap_or("unknown").to_string(),
-            running: status["status"].as_str() == Some("running"),
-            finished: status["status"].as_str() == Some("done"),
-            errors: status["errors"]
-                .as_array()
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default(),
-        })
+        let errors = json.errors.clone();
+        let status: CloudInitStatus = json.into();
+
+        Ok(CloudInitStatusInfo { status, errors })
     }
 
     /// Wait for cloud-init to complete with progress callback
@@ -259,20 +262,21 @@ impl VmHandle {
             }
 
             match self.get_cloud_init_status(user).await {
-                Ok(status) if status.finished => {
+                Ok(info) if info.finished() => {
                     info!("Cloud-init completed successfully");
                     progress_callback("done");
                     return Ok(());
                 }
-                Ok(status) if !status.errors.is_empty() => {
-                    let error_msg = format!("Cloud-init failed: {:?}", status.errors);
+                Ok(info) if !info.errors.is_empty() => {
+                    let error_msg = format!("Cloud-init failed: {:?}", info.errors);
                     progress_callback(&error_msg);
                     anyhow::bail!("{}", error_msg);
                 }
-                Ok(status) => {
-                    if status.status != last_status {
-                        progress_callback(&status.status);
-                        last_status = status.status;
+                Ok(info) => {
+                    let display = info.status.to_string();
+                    if display != last_status {
+                        progress_callback(&display);
+                        last_status = display;
                     }
                 }
                 Err(e) => {
