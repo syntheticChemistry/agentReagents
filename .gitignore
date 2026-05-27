@@ -53,4 +53,7 @@ id_rsa*
 Thumbs.db
 
 target/
+# titanv-sovereign C tools removed in S276 (ported to toadstool-cylinder Rust bins)
+# keeping .run exclusion in case driver binary is re-downloaded for reference
 tools/titanv-sovereign/nvidia-470.256.02.run
+tools/k80-sovereign/artifacts/*.ko

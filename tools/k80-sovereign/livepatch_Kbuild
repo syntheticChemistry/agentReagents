@@ -1,1 +1,0 @@
-obj-m += livepatch_nvkm_mc_reset.o
