@@ -80,7 +80,7 @@ impl ImageBuilder {
     /// Set a `plasmidBin` path so primal binaries are baked into the image.
     ///
     /// When set, the builder will copy binaries from `<path>/primals/<arch>/`
-    /// into `/opt/biomeos/bin/` during the build, making gate images ship
+    /// into `/opt/plasmidBin/` during the build, making gate images ship
     /// with pre-deployed primals.
     pub fn with_plasmid_bin(mut self, path: PathBuf) -> Self {
         self.plasmid_bin_path = Some(path);
