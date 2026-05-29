@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+name: nucleus-lab-node
+version: 1.0.0
+description: |
+  Reusable Docker container image for benchScale NUCLEUS deployment labs.
+  Pre-bakes all tools that lab scripts need (iproute2, socat, ssh, jq, git,
+  python3, xxd) so topologies don't install packages at runtime.
+
+  Used by: ecoprimals-vps-depot-deploy, ecoprimals-waterfall-gate-sync,
+  and any topology testing NUCLEUS deployment, federation mesh, or
+  cascade-pull workflows.
+
+  Deployment pattern: container lab substrate (benchScale Docker backend).
+
+base_image: docker.io/library/ubuntu:24.04
+
+resources:
+  memory_mb: 512
+  timeout_secs: 120
+
+container_config:
+  runtime: docker
+  network: bridge
+  read_only_rootfs: false
+  capabilities:
+    - NET_ADMIN
+
+build_steps:
+  - type: install_packages
+    packages:
+      - bash
+      - ca-certificates
+      - curl
+      - git
+      - iproute2
+      - iputils-ping
+      - jq
+      - openssh-client
+      - openssh-server
+      - procps
+      - python3
+      - socat
+      - xxd
+
+  - type: run_command
+    command: |
+      mkdir -p /opt/plasmidBin /opt/membrane /run/membrane
+      mkdir -p /opt/ecoPrimals/{primals,infra,gardens,springs}
+      mkdir -p /etc/membrane/family/nodes
+
+verification:
+  required_commands:
+    - tc
+    - socat
+    - ssh
+    - git
+    - jq
+    - curl
+    - python3
+    - xxd
+    - ping
+
+  verification_commands:
+    - command: tc qdisc show
+      expected_exit_code: 0
+      description: iproute2 tc available
+
+    - command: test -d /opt/plasmidBin
+      expected_exit_code: 0
+      description: plasmidBin directory exists
+
+    - command: test -d /opt/ecoPrimals
+      expected_exit_code: 0
+      description: ecoPrimals workspace structure exists
+
+    - command: test -d /run/membrane
+      expected_exit_code: 0
+      description: membrane runtime directory exists
+
+metadata:
+  os: ubuntu
+  os_version: "24.04"
+  purpose: benchscale-nucleus-lab-node
+  fast_boot: true
+  minimal: false
+  project: ecoPrimals
+  deployment_pattern: container-lab
+  requires_libvirt: false
