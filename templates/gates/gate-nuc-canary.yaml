@@ -1,0 +1,219 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Gate Template: NUC Canary (canary-fieldmouse profile)
+#
+# Resource-constrained VM simulating a NUC mini-VPS running the
+# canary-fieldmouse profile (previous-good binaries, full 13/13 primals,
+# warm standby). Validates Phase 1 of the VPS surface minimization path.
+#
+# Targets: NUC hardware (s-1vcpu-2gb class), canary droplet equivalents.
+# Reference: infra/plasmidBin/profiles/canary-fieldmouse.toml
+
+name: gate-nuc-canary
+version: "1.0.0"
+base_image: ubuntu-24.04-server-cloudimg-amd64.img
+description: >
+  NUC canary gate substrate. Deploys full 13 primals in constrained resources
+  (1 vCPU, 2GB RAM) using canary-fieldmouse profile. Runs previous-good
+  binaries as warm standby — validates VPS minimization path where NUC
+  hardware replaces paid VPS instances for canary duty.
+
+resources:
+  memory_mb: 2048
+  vcpus: 1
+  disk_gb: 20
+  timeout_secs: 900
+
+users:
+  - name: irongate
+    groups: [sudo]
+    ssh_authorized_keys: []
+
+environment:
+  FAMILY_SEED: "{{ family_seed }}"
+  FAMILY_ID: "{{ family_id }}"
+  NODE_ID: "{{ node_id }}"
+  GATE_NAME: "{{ gate_name }}"
+  SONGBIRD_PEERS: "{{ songbird_peers }}"
+  SONGBIRD_FEDERATION_ENABLED: "true"
+  PRIMAL_BIND_MODE: "auto"
+  MEMBRANE_ROLE: "canary"
+  ECOPRIMALS_ROOT: /opt/ecoPrimals
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 300
+
+  - type: install_packages
+    packages:
+      - openssh-server
+      - curl
+      - ca-certificates
+      - jq
+      - socat
+
+  - type: enable_service
+    service: ssh
+
+  - type: run_command
+    command: |
+      mkdir -p /opt/ecoPrimals/primals \
+               /opt/plasmidBin \
+               /run/membrane \
+               /etc/membrane/family/nodes \
+               /var/log/membrane \
+               /opt/ecoPrimals/data
+    description: "Create NUCLEUS directory structure (minimal)"
+
+  - type: run_command
+    command: |
+      PLASMID_BIN="${PLASMID_BIN:-/opt/plasmidBin}"
+      ARCH="x86_64-unknown-linux-musl"
+      SRC="${PLASMID_BIN}/primals/${ARCH}"
+      PRIMALS="beardog songbird skunkbat toadstool barracuda coralreef nestgate rhizocrypt loamspine sweetgrass biomeos squirrel petaltongue"
+      for primal in $PRIMALS; do
+        if [ -f "${SRC}/${primal}" ]; then
+          cp "${SRC}/${primal}" /opt/ecoPrimals/primals/
+        fi
+      done
+      chmod +x /opt/ecoPrimals/primals/* 2>/dev/null || true
+      if [ -f "${PLASMID_BIN}/membrane" ]; then
+        cp "${PLASMID_BIN}/membrane" /usr/local/bin/membrane
+        chmod +x /usr/local/bin/membrane
+      fi
+    description: "Deploy primals from plasmidBin (canary = previous-good binaries)"
+
+post_boot_steps:
+  - type: create_file
+    path: /etc/membrane/tower.env
+    content: |
+      FAMILY_SEED={{ family_seed }}
+      FAMILY_ID={{ family_id }}
+      NODE_ID={{ node_id }}
+      GATE_NAME={{ gate_name }}
+      SONGBIRD_PEERS={{ songbird_peers }}
+      SONGBIRD_FEDERATION_ENABLED=true
+      PRIMAL_BIND_MODE=auto
+      SECURITY_SOCKET=/run/membrane/beardog.sock
+      MEMBRANE_ROLE=canary
+      ECOPRIMALS_ROOT=/opt/ecoPrimals
+    mode: "0600"
+
+  - type: create_file
+    path: /etc/systemd/system/beardog-membrane.service
+    content: |
+      [Unit]
+      Description=BearDog Sovereign Cryptography (Canary)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      EnvironmentFile=/etc/membrane/tower.env
+      ExecStart=/opt/ecoPrimals/primals/beardog server --socket /run/membrane/beardog.sock
+      Restart=on-failure
+      RestartSec=3
+      RuntimeDirectory=membrane
+      RuntimeDirectoryPreserve=yes
+      MemoryMax=256M
+      CPUQuota=50%
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: create_file
+    path: /etc/systemd/system/songbird-membrane.service
+    content: |
+      [Unit]
+      Description=Songbird Mesh Federation (Canary)
+      After=network-online.target beardog-membrane.service
+      Wants=network-online.target
+      Requires=beardog-membrane.service
+
+      [Service]
+      Type=simple
+      EnvironmentFile=/etc/membrane/tower.env
+      ExecStart=/opt/ecoPrimals/primals/songbird server --socket /run/membrane/songbird.sock --port 7700
+      Restart=on-failure
+      RestartSec=3
+      MemoryMax=128M
+      CPUQuota=25%
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: create_file
+    path: /etc/systemd/system/membrane-nucleus@.service
+    content: |
+      [Unit]
+      Description=NUCLEUS Primal %i (Canary)
+      After=beardog-membrane.service songbird-membrane.service
+      Requires=beardog-membrane.service
+
+      [Service]
+      Type=simple
+      EnvironmentFile=/etc/membrane/tower.env
+      ExecStart=/opt/ecoPrimals/primals/%i server --socket /run/membrane/%i.sock
+      Restart=on-failure
+      RestartSec=5
+      MemoryMax=128M
+      CPUQuota=20%
+      Nice=10
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: run_command
+    command: |
+      systemctl daemon-reload
+      systemctl enable beardog-membrane songbird-membrane
+      systemctl enable membrane-nucleus@skunkbat
+      systemctl enable membrane-nucleus@toadstool membrane-nucleus@barracuda membrane-nucleus@coralreef
+      systemctl enable membrane-nucleus@nestgate membrane-nucleus@rhizocrypt membrane-nucleus@loamspine membrane-nucleus@sweetgrass
+      systemctl enable membrane-nucleus@biomeos membrane-nucleus@squirrel membrane-nucleus@petaltongue
+      systemctl start beardog-membrane
+      sleep 2
+      systemctl start songbird-membrane
+      sleep 1
+      systemctl start membrane-nucleus@skunkbat
+      sleep 1
+      systemctl start membrane-nucleus@toadstool membrane-nucleus@barracuda membrane-nucleus@coralreef
+      systemctl start membrane-nucleus@nestgate membrane-nucleus@rhizocrypt membrane-nucleus@loamspine membrane-nucleus@sweetgrass
+      systemctl start membrane-nucleus@biomeos membrane-nucleus@squirrel membrane-nucleus@petaltongue
+    description: "Enable and start all NUCLEUS primals (throttled for NUC constraints)"
+
+verification:
+  required_packages:
+    - openssh-server
+    - curl
+    - jq
+    - socat
+  required_services:
+    - ssh
+    - beardog-membrane
+    - songbird-membrane
+  required_files:
+    - /etc/membrane/tower.env
+    - /opt/ecoPrimals/primals/beardog
+    - /opt/ecoPrimals/primals/songbird
+  verification_commands:
+    - command: "ls /run/membrane/*.sock | wc -l"
+      description: "At least 13 UDS sockets exist"
+      expected_min: 13
+    - command: "echo '{\"jsonrpc\":\"2.0\",\"method\":\"health\",\"id\":1}' | socat -t2 - UNIX-CONNECT:/run/membrane/beardog.sock | jq -r '.result // .error'"
+      description: "BearDog responds to health probe"
+      expected_exit_code: 0
+    - command: "free -m | awk '/Mem:/{print $3}'"
+      description: "Memory usage under 1800MB"
+      expected_max: 1800
+
+metadata:
+  gate_standard: "GATE_DEPLOYMENT_STANDARD.md"
+  target_gates: "nuc-alpha,canary-droplet"
+  arch: "x86_64"
+  composition: "full"
+  profile: "canary-fieldmouse"
+  primal_count: 13
+  role: "canary"

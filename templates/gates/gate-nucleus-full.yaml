@@ -1,0 +1,235 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Gate Template: Full NUCLEUS (13/13 primals + membrane CLI)
+#
+# Complete sovereign gate VM for full ecosystem deployment.
+# Deploys all 13 NUCLEUS primals via plasmidBin, installs membrane CLI,
+# creates systemd units with UDS-first binding, configures tower.env
+# with family seeds and mesh peers, runs gate.bootstrap as post-boot.
+#
+# Targets: ironGate (primary workstation), any full NUCLEUS gate.
+# Reference: infra/wateringHole/GATE_DEPLOYMENT_STANDARD.md
+
+name: gate-nucleus-full
+version: "1.0.0"
+base_image: ubuntu-24.04-server-cloudimg-amd64.img
+description: >
+  Full NUCLEUS gate substrate. Deploys all 13 primals (Tower + Node + Nest + Meta)
+  as systemd services with UDS-first binding. Installs membrane CLI for cascade,
+  bootstrap, and mesh management. Suitable for ironGate, eastGate, swiftGate —
+  any gate requiring full ecosystem presence.
+
+resources:
+  memory_mb: 8192
+  vcpus: 4
+  disk_gb: 40
+  timeout_secs: 1200
+
+users:
+  - name: irongate
+    groups: [sudo, docker]
+    ssh_authorized_keys: []
+
+environment:
+  FAMILY_SEED: "{{ family_seed }}"
+  FAMILY_ID: "{{ family_id }}"
+  NODE_ID: "{{ node_id }}"
+  GATE_NAME: "{{ gate_name }}"
+  SONGBIRD_PEERS: "{{ songbird_peers }}"
+  SONGBIRD_FEDERATION_ENABLED: "true"
+  PRIMAL_BIND_MODE: "auto"
+  ECOPRIMALS_ROOT: /opt/ecoPrimals
+
+build_steps:
+  - type: wait_cloud_init
+    timeout_secs: 600
+
+  - type: install_packages
+    packages:
+      - openssh-server
+      - curl
+      - ca-certificates
+      - iproute2
+      - jq
+      - socat
+
+  - type: enable_service
+    service: ssh
+
+  - type: run_command
+    command: |
+      mkdir -p /opt/ecoPrimals/primals \
+               /opt/ecoPrimals/infra \
+               /opt/plasmidBin \
+               /run/membrane \
+               /etc/membrane/family/nodes \
+               /var/log/membrane \
+               /opt/ecoPrimals/data
+    description: "Create NUCLEUS directory structure"
+
+  - type: run_command
+    command: |
+      PLASMID_BIN="${PLASMID_BIN:-/opt/plasmidBin}"
+      ARCH="x86_64-unknown-linux-musl"
+      SRC="${PLASMID_BIN}/primals/${ARCH}"
+      PRIMALS="beardog songbird skunkbat toadstool barracuda coralreef nestgate rhizocrypt loamspine sweetgrass biomeos squirrel petaltongue"
+      for primal in $PRIMALS; do
+        if [ -f "${SRC}/${primal}" ]; then
+          cp "${SRC}/${primal}" /opt/ecoPrimals/primals/
+        fi
+      done
+      chmod +x /opt/ecoPrimals/primals/* 2>/dev/null || true
+      if [ -f "${PLASMID_BIN}/membrane" ]; then
+        cp "${PLASMID_BIN}/membrane" /usr/local/bin/membrane
+        chmod +x /usr/local/bin/membrane
+      fi
+    description: "Deploy 13 primals + membrane CLI from plasmidBin"
+
+post_boot_steps:
+  - type: create_file
+    path: /etc/membrane/tower.env
+    content: |
+      FAMILY_SEED={{ family_seed }}
+      FAMILY_ID={{ family_id }}
+      NODE_ID={{ node_id }}
+      GATE_NAME={{ gate_name }}
+      SONGBIRD_PEERS={{ songbird_peers }}
+      SONGBIRD_FEDERATION_ENABLED=true
+      PRIMAL_BIND_MODE=auto
+      SECURITY_SOCKET=/run/membrane/beardog.sock
+      ECOPRIMALS_ROOT=/opt/ecoPrimals
+    mode: "0600"
+
+  - type: create_file
+    path: /etc/systemd/system/beardog-membrane.service
+    content: |
+      [Unit]
+      Description=BearDog Sovereign Cryptography (NUCLEUS Tower)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      EnvironmentFile=/etc/membrane/tower.env
+      ExecStart=/opt/ecoPrimals/primals/beardog server --socket /run/membrane/beardog.sock
+      Restart=on-failure
+      RestartSec=3
+      RuntimeDirectory=membrane
+      RuntimeDirectoryPreserve=yes
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: create_file
+    path: /etc/systemd/system/songbird-membrane.service
+    content: |
+      [Unit]
+      Description=Songbird Mesh Federation (NUCLEUS Tower)
+      After=network-online.target beardog-membrane.service
+      Wants=network-online.target
+      Requires=beardog-membrane.service
+
+      [Service]
+      Type=simple
+      EnvironmentFile=/etc/membrane/tower.env
+      ExecStart=/opt/ecoPrimals/primals/songbird server --socket /run/membrane/songbird.sock --port 7700
+      Restart=on-failure
+      RestartSec=3
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: create_file
+    path: /etc/systemd/system/skunkbat-membrane.service
+    content: |
+      [Unit]
+      Description=SkunkBat Defense (NUCLEUS Tower)
+      After=beardog-membrane.service
+      Requires=beardog-membrane.service
+
+      [Service]
+      Type=simple
+      EnvironmentFile=/etc/membrane/tower.env
+      ExecStart=/opt/ecoPrimals/primals/skunkbat server --socket /run/membrane/skunkbat.sock
+      Restart=on-failure
+      RestartSec=3
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: create_file
+    path: /etc/systemd/system/membrane-nucleus@.service
+    content: |
+      [Unit]
+      Description=NUCLEUS Primal %i
+      After=beardog-membrane.service songbird-membrane.service
+      Requires=beardog-membrane.service
+
+      [Service]
+      Type=simple
+      EnvironmentFile=/etc/membrane/tower.env
+      ExecStart=/opt/ecoPrimals/primals/%i server --socket /run/membrane/%i.sock
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+
+  - type: run_command
+    command: |
+      systemctl daemon-reload
+      systemctl enable beardog-membrane songbird-membrane skunkbat-membrane
+      systemctl enable membrane-nucleus@toadstool membrane-nucleus@barracuda membrane-nucleus@coralreef
+      systemctl enable membrane-nucleus@nestgate membrane-nucleus@rhizocrypt membrane-nucleus@loamspine membrane-nucleus@sweetgrass
+      systemctl enable membrane-nucleus@biomeos membrane-nucleus@squirrel membrane-nucleus@petaltongue
+      systemctl start beardog-membrane
+      sleep 2
+      systemctl start songbird-membrane skunkbat-membrane
+      sleep 2
+      systemctl start membrane-nucleus@toadstool membrane-nucleus@barracuda membrane-nucleus@coralreef
+      systemctl start membrane-nucleus@nestgate membrane-nucleus@rhizocrypt membrane-nucleus@loamspine membrane-nucleus@sweetgrass
+      systemctl start membrane-nucleus@biomeos membrane-nucleus@squirrel membrane-nucleus@petaltongue
+    description: "Enable and start all 13 NUCLEUS primals via systemd"
+
+  - type: run_command
+    command: |
+      if command -v membrane >/dev/null 2>&1; then
+        membrane gate.bootstrap {{ gate_name }} --profile full 2>&1 || true
+      fi
+    description: "Run gate.bootstrap as post-boot step"
+
+verification:
+  required_packages:
+    - openssh-server
+    - curl
+    - jq
+    - socat
+  required_services:
+    - ssh
+    - beardog-membrane
+    - songbird-membrane
+    - skunkbat-membrane
+  required_files:
+    - /etc/membrane/tower.env
+    - /opt/ecoPrimals/primals/beardog
+    - /opt/ecoPrimals/primals/songbird
+  verification_commands:
+    - command: "ls /run/membrane/*.sock | wc -l"
+      description: "At least 13 UDS sockets exist"
+      expected_min: 13
+    - command: "echo '{\"jsonrpc\":\"2.0\",\"method\":\"health\",\"id\":1}' | socat -t2 - UNIX-CONNECT:/run/membrane/beardog.sock | jq -r '.result // .error'"
+      description: "BearDog responds to health probe"
+      expected_exit_code: 0
+    - command: "echo '{\"jsonrpc\":\"2.0\",\"method\":\"federation.status\",\"id\":1}' | socat -t2 - UNIX-CONNECT:/run/membrane/songbird.sock | jq -r '.result.enabled'"
+      description: "Songbird federation is enabled"
+      expected_contains: "true"
+
+metadata:
+  gate_standard: "GATE_DEPLOYMENT_STANDARD.md"
+  target_gates: "irongate,eastgate,swiftgate"
+  arch: "x86_64"
+  composition: "full"
+  primal_count: 13
